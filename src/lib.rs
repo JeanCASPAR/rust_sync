@@ -1,12 +1,12 @@
+use syn::parse_macro_input;
+
 extern crate proc_macro;
+
+mod parser;
 
 #[proc_macro]
 pub fn sync(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let input = proc_macro2::TokenStream::from(input);
+    let _nodes = parse_macro_input!(input as parser::Nodes);
 
-    let output: proc_macro2::TokenStream = {
-        input /* transform input */
-    };
-
-    proc_macro::TokenStream::from(output)
+    proc_macro::TokenStream::new()
 }
