@@ -102,8 +102,10 @@ pub enum MathBinOp {
 /// E1 -> E1 + E2 | E1 - E2 | E2
 /// E2 -> E2 * E3 | E2 / E3 | E2 % E3 | E3
 /// E3 -> -E4 | pre E4 | E4
-/// E4 -> lit
+/// E4 -> E5 as float | E5
+/// E5 -> lit
 ///     | var
+///     | fun ( E0, ..., E0 )
 ///     | if E0 { E0 } else { E0 }
 ///     | (E0)
 /// /// <=========================>
@@ -114,8 +116,10 @@ pub enum MathBinOp {
 ///  E3 -> -E4
 ///      | pre E4
 ///      | E4
-///  E4 -> lit
+/// E4 -> E5 as float | E5
+///  E5 -> lit
 ///      | var
+///      | fun ( E0, ..., E0 )
 ///      | if E0 { E0 } else { E0 }
 ///      | (E0)
 /// E1' -> + E2 E1'
@@ -141,6 +145,9 @@ pub enum Expr {
     Int(i64),
     Float(f64),
     Bool(bool),
+    /// cast an int to a float
+    FloatCast(Box<Expr>),
+    FunCall(Ident, Vec<Expr>),
 }
 
 impl Parse for Expr {
@@ -333,15 +340,46 @@ impl Parse for Expr {
         }
 
         enum Expr4 {
+            FloatCast(Expr5),
+            Down(Expr5),
+        }
+
+        impl Parse for Expr4 {
+            fn parse(input: ParseStream) -> syn::Result<Self> {
+                let e = input.parse::<Expr5>()?;
+                if input.peek(Token![as]) {
+                    let _ = input.parse::<Token![as]>()?;
+                    let ty = input.parse::<Type>()?;
+                    match ty {
+                        Type::Float64 => Ok(Expr4::FloatCast(e)),
+                        _ => Err(input.error("You can only cast to float")),
+                    }
+                } else {
+                    Ok(Expr4::Down(e))
+                }
+            }
+        }
+
+        impl Into<Expr> for Expr4 {
+            fn into(self) -> Expr {
+                match self {
+                    Self::FloatCast(e) => Expr::FloatCast(Box::new(e.into())),
+                    Self::Down(e) => e.into(),
+                }
+            }
+        }
+
+        enum Expr5 {
             If(Box<Expr0>, Box<Expr0>, Box<Expr0>),
             Paren(Box<Expr0>),
             Int(i64),
             Float(f64),
             Bool(bool),
             Var(Ident),
+            FunCall(Ident, Vec<Expr0>),
         }
 
-        impl Parse for Expr4 {
+        impl Parse for Expr5 {
             fn parse(input: ParseStream) -> syn::Result<Self> {
                 let lookahead = input.lookahead1();
                 if lookahead.peek(Token![if]) {
@@ -354,31 +392,44 @@ impl Parse for Expr {
                     let else_branch;
                     braced!(else_branch in input);
                     let e2 = else_branch.parse::<Expr0>()?;
-                    Ok(Expr4::If(Box::new(cond), Box::new(e1), Box::new(e2)))
+                    Ok(Expr5::If(Box::new(cond), Box::new(e1), Box::new(e2)))
                 } else if lookahead.peek(Paren) {
                     let content;
                     parenthesized!(content in input);
                     let e = content.parse::<Expr0>()?;
-                    Ok(Expr4::Paren(Box::new(e)))
+                    Ok(Expr5::Paren(Box::new(e)))
                 } else if lookahead.peek(LitInt) {
                     let n = input.parse::<LitInt>()?.base10_parse::<i64>()?;
-                    Ok(Expr4::Int(n))
+                    Ok(Expr5::Int(n))
                 } else if lookahead.peek(LitFloat) {
                     let x = input.parse::<LitFloat>()?.base10_parse::<f64>()?;
-                    Ok(Expr4::Float(x))
+                    Ok(Expr5::Float(x))
                 } else if lookahead.peek(LitBool) {
                     let b = input.parse::<LitBool>()?.value();
-                    Ok(Expr4::Bool(b))
+                    Ok(Expr5::Bool(b))
                 } else if lookahead.peek(Ident) {
                     let id = input.parse::<Ident>()?;
-                    Ok(Expr4::Var(id))
+                    if input.peek(Paren) {
+                        let content;
+                        parenthesized!(content in input);
+                        let args: Vec<Expr0> = content
+                            .parse_terminated(Expr0::parse, Token![,])?
+                            .into_pairs()
+                            .map(|pair| match pair {
+                                Pair::Punctuated(t, _) | Pair::End(t) => t,
+                            })
+                            .collect();
+                        Ok(Expr5::FunCall(id, args))
+                    } else {
+                        Ok(Expr5::Var(id))
+                    }
                 } else {
                     Err(lookahead.error())
                 }
             }
         }
 
-        impl Into<Expr> for Expr4 {
+        impl Into<Expr> for Expr5 {
             fn into(self) -> Expr {
                 match self {
                     Self::If(cond, e1, e2) => Expr::If(
@@ -391,6 +442,9 @@ impl Parse for Expr {
                     Self::Float(x) => Expr::Float(x),
                     Self::Bool(b) => Expr::Bool(b),
                     Self::Var(id) => Expr::Var(id),
+                    Self::FunCall(id, args) => {
+                        Expr::FunCall(id, args.into_iter().map(Into::into).collect())
+                    }
                 }
             }
         }
