@@ -1,12 +1,9 @@
-use std::thread::LocalKey;
-
-use quote::ToTokens;
 use syn::{
     braced, parenthesized,
     parse::{Parse, ParseStream},
     punctuated::{Pair, Punctuated},
     token::Paren,
-    Ident, Lit, LitBool, LitFloat, LitInt, Token,
+    Ident, LitBool, LitFloat, LitInt, Token,
 };
 
 mod kw {
@@ -100,6 +97,40 @@ pub enum MathBinOp {
     NEq,
 }
 
+/// Expression grammar :
+/// E0 -> E1 -> E0 | E1
+/// E1 -> E1 + E2 | E1 - E2 | E2
+/// E2 -> E2 * E3 | E2 / E3 | E2 % E3 | E3
+/// E3 -> -E4 | pre E4 | E4
+/// E4 -> lit
+///     | var
+///     | if E0 { E0 } else { E0 }
+///     | (E0)
+/// /// <=========================>
+///  E0 -> E1 => E0
+///      | E1
+///  E1 -> E2 E1'
+///  E2 -> E3 E2'
+///  E3 -> -E4
+///      | pre E4
+///      | E4
+///  E4 -> lit
+///      | var
+///      | if E0 { E0 } else { E0 }
+///      | (E0)
+/// E1' -> + E2 E1'
+///      | - E2 E1'
+///      | ε
+/// E2' -> * E3 E2'
+///      | / E3 E2'
+///      | % E3 E2'
+///      | ε
+///  ===================
+///
+/// E -> E0
+/// after each -, we must check that there is no >, because -> is not a real token
+/// and it makes the grammar ambiguous
+
 pub enum Expr {
     Var(Ident),
     Pre(Box<Expr>),
@@ -121,7 +152,9 @@ impl Parse for Expr {
 
         impl Parse for Expr0 {
             fn parse(input: ParseStream) -> syn::Result<Self> {
+                println!("before : {}", input);
                 let e1 = input.parse::<Expr1>()?;
+                println!("after : {}", input);
                 if input.peek(Token![->]) {
                     let _ = input.parse::<Token![->]>()?;
                     let e2 = input.parse::<Expr0>()?;
@@ -141,94 +174,127 @@ impl Parse for Expr {
             }
         }
 
-        enum Expr1 {
-            Add(Expr2, Box<Expr0>),
-            Sub(Expr2, Box<Expr0>),
-            Down(Expr2),
-        }
+        struct Expr1(Expr2, Expr1bis);
 
         impl Parse for Expr1 {
             fn parse(input: ParseStream) -> syn::Result<Self> {
-                let e1 = input.parse::<Expr2>()?;
-                if input.peek(Token![+]) {
-                    let _ = input.parse::<Token![+]>()?;
-                    let e2 = input.parse::<Expr0>()?;
-                    Ok(Expr1::Add(e1, Box::new(e2)))
-                } else if input.peek(Token![-]) {
-                    let _ = input.parse::<Token![-]>()?;
-                    let e2 = input.parse::<Expr0>()?;
-                    Ok(Expr1::Sub(e1, Box::new(e2)))
-                } else {
-                    Ok(Expr1::Down(e1))
-                }
+                Ok(Expr1(input.parse::<Expr2>()?, input.parse::<Expr1bis>()?))
             }
         }
 
         impl Into<Expr> for Expr1 {
             fn into(self) -> Expr {
-                match self {
-                    Self::Add(e1, e2) => Expr::MathBinOp(
-                        Box::new(e1.into()),
-                        MathBinOp::Add,
-                        Box::new(((*e2).into())),
-                    ),
-                    Self::Sub(e1, e2) => Expr::MathBinOp(
-                        Box::new(e1.into()),
-                        MathBinOp::Sub,
-                        Box::new(((*e2).into())),
-                    ),
-                    Self::Down(e) => e.into(),
+                let e = self.0.into();
+                self.1.into_with_ctx(e)
+            }
+        }
+
+        enum Expr1bis {
+            Add(Expr2, Box<Expr1bis>),
+            Sub(Expr2, Box<Expr1bis>),
+            Empty,
+        }
+
+        impl Parse for Expr1bis {
+            fn parse(input: ParseStream) -> syn::Result<Self> {
+                if input.peek(Token![+]) {
+                    let _ = input.parse::<Token![+]>()?;
+                    let e1 = input.parse::<Expr2>()?;
+                    let e2 = input.parse::<Expr1bis>()?;
+                    Ok(Expr1bis::Add(e1, Box::new(e2)))
+                } else if input.peek(Token![-]) && !input.peek2(Token![>]) {
+                    let _ = input.parse::<Token![-]>()?;
+                    let e1 = input.parse::<Expr2>()?;
+                    let e2 = input.parse::<Expr1bis>()?;
+                    Ok(Expr1bis::Sub(e1, Box::new(e2)))
+                } else {
+                    Ok(Expr1bis::Empty)
                 }
             }
         }
 
-        enum Expr2 {
-            Mul(Expr3, Box<Expr0>),
-            Div(Expr3, Box<Expr0>),
-            Rem(Expr3, Box<Expr0>),
-            Down(Expr3),
+        impl Expr1bis {
+            fn into_with_ctx(self, e: Expr) -> Expr {
+                match self {
+                    Self::Add(e1, e2) => (*e2).into_with_ctx(Expr::MathBinOp(
+                        Box::new(e),
+                        MathBinOp::Add,
+                        Box::new(e1.into()),
+                    )),
+                    Self::Sub(e1, e2) => (*e2).into_with_ctx(Expr::MathBinOp(
+                        Box::new(e),
+                        MathBinOp::Sub,
+                        Box::new(e1.into()),
+                    )),
+                    Self::Empty => e,
+                }
+            }
         }
+
+        struct Expr2(Expr3, Expr2bis);
 
         impl Parse for Expr2 {
             fn parse(input: ParseStream) -> syn::Result<Self> {
-                let e1 = input.parse::<Expr3>()?;
-                if input.peek(Token![*]) {
-                    let _ = input.parse::<Token![*]>()?;
-                    let e2 = input.parse::<Expr0>()?;
-                    Ok(Expr2::Mul(e1, Box::new(e2)))
-                } else if input.peek(Token![/]) {
-                    let _ = input.parse::<Token![/]>()?;
-                    let e2 = input.parse::<Expr0>()?;
-                    Ok(Expr2::Div(e1, Box::new(e2)))
-                } else if input.peek(Token![%]) {
-                    let _ = input.parse::<Token![%]>()?;
-                    let e2 = input.parse::<Expr0>()?;
-                    Ok(Expr2::Rem(e1, Box::new(e2)))
-                } else {
-                    Ok(Expr2::Down(e1))
-                }
+                Ok(Expr2(input.parse::<Expr3>()?, input.parse::<Expr2bis>()?))
             }
         }
 
         impl Into<Expr> for Expr2 {
             fn into(self) -> Expr {
+                let e = self.0.into();
+                self.1.into_with_ctx(e)
+            }
+        }
+
+        enum Expr2bis {
+            Mul(Expr3, Box<Expr2bis>),
+            Div(Expr3, Box<Expr2bis>),
+            Rem(Expr3, Box<Expr2bis>),
+            Empty,
+        }
+
+        impl Parse for Expr2bis {
+            fn parse(input: ParseStream) -> syn::Result<Self> {
+                if input.peek(Token![*]) {
+                    let _ = input.parse::<Token![*]>()?;
+                    let e1 = input.parse::<Expr3>()?;
+                    let e2 = input.parse::<Expr2bis>()?;
+                    Ok(Expr2bis::Mul(e1, Box::new(e2)))
+                } else if input.peek(Token![/]) {
+                    let _ = input.parse::<Token![/]>()?;
+                    let e1 = input.parse::<Expr3>()?;
+                    let e2 = input.parse::<Expr2bis>()?;
+                    Ok(Expr2bis::Div(e1, Box::new(e2)))
+                } else if input.peek(Token![%]) {
+                    let _ = input.parse::<Token![%]>()?;
+                    let e1 = input.parse::<Expr3>()?;
+                    let e2 = input.parse::<Expr2bis>()?;
+                    Ok(Expr2bis::Rem(e1, Box::new(e2)))
+                } else {
+                    Ok(Expr2bis::Empty)
+                }
+            }
+        }
+
+        impl Expr2bis {
+            fn into_with_ctx(self, e: Expr) -> Expr {
                 match self {
-                    Self::Mul(e1, e2) => Expr::MathBinOp(
-                        Box::new(e1.into()),
+                    Self::Mul(e1, e2) => (*e2).into_with_ctx(Expr::MathBinOp(
+                        Box::new(e),
                         MathBinOp::Mul,
-                        Box::new(((*e2).into())),
-                    ),
-                    Self::Div(e1, e2) => Expr::MathBinOp(
                         Box::new(e1.into()),
+                    )),
+                    Self::Div(e1, e2) => (*e2).into_with_ctx(Expr::MathBinOp(
+                        Box::new(e),
                         MathBinOp::Div,
-                        Box::new(((*e2).into())),
-                    ),
-                    Self::Rem(e1, e2) => Expr::MathBinOp(
                         Box::new(e1.into()),
+                    )),
+                    Self::Rem(e1, e2) => (*e2).into_with_ctx(Expr::MathBinOp(
+                        Box::new(e),
                         MathBinOp::Rem,
-                        Box::new(((*e2).into())),
-                    ),
-                    Self::Down(e) => e.into(),
+                        Box::new(e1.into()),
+                    )),
+                    Self::Empty => e,
                 }
             }
         }
@@ -241,14 +307,14 @@ impl Parse for Expr {
 
         impl Parse for Expr3 {
             fn parse(input: ParseStream) -> syn::Result<Self> {
-                if input.peek(Token![-]) {
+                if input.peek(Token![-]) && !input.peek2(Token![>]) {
                     let _ = input.parse::<Token![-]>()?;
                     let e = input.parse::<Expr4>()?;
                     Ok(Expr3::Minus(e))
                 } else if input.peek(kw::pre) {
                     let _ = input.parse::<kw::pre>()?;
                     let e = input.parse::<Expr4>()?;
-                    Ok(Expr3::Minus(e))
+                    Ok(Expr3::Pre(e))
                 } else {
                     let e = input.parse::<Expr4>()?;
                     Ok(Expr3::Down(e))
