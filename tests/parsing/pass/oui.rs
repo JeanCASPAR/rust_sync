@@ -14,6 +14,4 @@ sync! {
         () = f();
 }
 
-fn main() {
-    println!("Test!");
-}
+fn main() {}

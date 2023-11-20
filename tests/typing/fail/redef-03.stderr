@@ -1,0 +1,11 @@
+error: variable `hello` is defined twice
+ --> tests/typing/fail/redef-03.rs:4:27
+  |
+4 |     node oui(hello : int, hello : int) = ()
+  |                           ^^^^^
+  |
+help: the variable was previously defined here
+ --> tests/typing/fail/redef-03.rs:4:14
+  |
+4 |     node oui(hello : int, hello : int) = ()
+  |              ^^^^^

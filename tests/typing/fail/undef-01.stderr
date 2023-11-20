@@ -1,0 +1,5 @@
+error: Variable `hello` is undefined.
+ --> tests/typing/fail/undef-01.rs:4:19
+  |
+4 |     node oui() = (hello)
+  |                   ^^^^^
