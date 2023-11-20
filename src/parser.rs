@@ -7,6 +7,8 @@ use syn::{
     Ident, LitBool, LitFloat, LitInt, Token,
 };
 
+use crate::error::Error;
+
 mod kw {
     use syn::custom_keyword;
 
