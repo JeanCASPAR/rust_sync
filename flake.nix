@@ -22,9 +22,9 @@
             rust-overlay.overlays.default
           ];
         };
-        rust = pkgs.rust-bin.stable.latest.default.override {
+        rust = pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default.override {
           extensions = [ "rust-src" "clippy" ];
-        };
+        });
         naerskLib = naersk.lib.${system}.override {
           cargo = rust;
           rustc = rust;
