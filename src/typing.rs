@@ -1,0 +1,299 @@
+use patricia_tree::StringPatriciaMap;
+use proc_macro2::Span;
+use syn::Ident;
+
+use crate::{
+    error::Error,
+    parser::{
+        Decl as PDecl, Expr as PExpr, MathBinOp, Node as PNode, NodeParams, NodeType, Nodes, Type,
+    },
+};
+
+pub struct Ast {
+    nodes: Vec<Node>,
+}
+
+type Map<T> = StringPatriciaMap<T>;
+
+impl TryFrom<Nodes> for Ast {
+    type Error = Error;
+    fn try_from(nodes: Nodes) -> Result<Self, Self::Error> {
+        let mut node_types = Map::new();
+        for node in nodes.0.iter() {
+            node_types.insert(node.name.to_string(), node.return_types()?);
+        }
+        Ok(Self {
+            nodes: nodes
+                .0
+                .into_iter()
+                .map(|node| Node::from_untyped(node, &node_types))
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+}
+
+pub struct Node {
+    pub name: Ident,
+    pub params: NodeParams,
+    pub ret: Vec<(Ident, Type)>,
+    pub body: Vec<Decl>,
+}
+
+impl Node {
+    fn from_untyped(node: PNode, node_types: &Map<NodeType>) -> Result<Self, Error> {
+        // Create the context of the node, that is, the type of every declared variable.
+        let mut context: Map<(Type, Span)> = Map::new();
+        // Register all the variable declarations, starting with formal arguments and then the
+        // equation declarations. This ensures that duplicate variables are reported in the same
+        // order they appear in the code.
+        for (var_name, var_span, var_type) in node
+            .params
+            .0
+            .iter()
+            .map(|param| (param.id.to_string(), param.id.span(), param.ty))
+            .chain(
+                node.body
+                    .0
+                    .iter()
+                    .map(|equation| (equation.id.to_string(), equation.id.span(), equation.ty)),
+            )
+        {
+            if let Some((_, def_span)) = context.insert(&var_name, (var_type, var_span)) {
+                return Err(Error::twice_var(var_name, def_span, var_span));
+            }
+        }
+        Ok(Self {
+            params: node.params,
+            ret: node
+                .ret
+                .0
+                .into_iter()
+                .zip(
+                    node_types
+                        .get(node.name.to_string())
+                        .unwrap()
+                        .ret_types
+                        .iter()
+                        .copied(),
+                )
+                .collect(),
+            name: node.name,
+            body: node
+                .body
+                .0
+                .into_iter()
+                .map(|decl| Decl::from_untyped(decl, &context, node_types))
+                .collect::<Result<_, _>>()?,
+        })
+    }
+}
+
+pub struct Decl {
+    id: Ident,
+    ty: Type,
+    expr: Expr,
+}
+
+impl Decl {
+    fn from_untyped(
+        decl: PDecl,
+        context: &Map<(Type, Span)>,
+        node_types: &Map<NodeType>,
+    ) -> Result<Self, Error> {
+        let expr = Expr::from_untyped(decl.expr, context, node_types, Some(decl.ty))?;
+        if expr.ty != decl.ty {
+            return Err(Error::type_mismatch(decl.id.span(), decl.ty, expr.ty));
+        }
+        Ok(Self {
+            id: decl.id,
+            ty: decl.ty,
+            expr,
+        })
+    }
+}
+
+pub struct Expr {
+    ty: Type,
+    kind: ExprKind,
+}
+
+impl Expr {
+    fn from_untyped(
+        expr: PExpr,
+        context: &Map<(Type, Span)>,
+        node_types: &Map<NodeType>,
+        toplevel_type: Option<Type>,
+    ) -> Result<Self, Error> {
+        Self::do_stuff(expr, context, node_types, 0, toplevel_type)
+    }
+
+    fn do_stuff(
+        expr: PExpr,
+        context: &Map<(Type, Span)>,
+        node_types: &Map<NodeType>,
+        first_index: u16,
+        toplevel_type: Option<Type>,
+    ) -> Result<Self, Error> {
+        Ok(match expr {
+            PExpr::Var(var) => {
+                let var_name = var.to_string();
+                let ty = context
+                    .get(var_name)
+                    .ok_or_else(|| Error::undef_var(&var))?
+                    .0;
+                Self {
+                    ty,
+                    kind: ExprKind::Var(var),
+                }
+            }
+            PExpr::Pre(e) => {
+                if first_index == 0 {
+                    // TODO: there should be the span of `expr` here.
+                    return Err(Error::negative_first_index(todo!("missing span")));
+                }
+                let typed_e = Self::do_stuff(*e, context, node_types, first_index - 1, None)?;
+                Self {
+                    ty: typed_e.ty,
+                    kind: ExprKind::Pre(Box::new(typed_e)),
+                }
+            }
+            PExpr::Then(head, tail) => {
+                let head_expr = Self::do_stuff(*head, context, node_types, first_index, None)?;
+                let tail_expr = Self::do_stuff(*tail, context, node_types, first_index + 1, None)?;
+                if head_expr.ty != tail_expr.ty {
+                    // TODO: there should be the span of `expr`.
+                    return Err(Error::then_type_mismatch(
+                        todo!("missing span"),
+                        head_expr.ty,
+                        tail_expr.ty,
+                    ));
+                }
+                Self {
+                    ty: head_expr.ty,
+                    kind: ExprKind::Then(Box::new(head_expr), Box::new(tail_expr)),
+                }
+            }
+            PExpr::Minus(e) => {
+                let typed_e = Self::do_stuff(*e, context, node_types, first_index - 1, None)?;
+                if typed_e.ty == Type::Bool {
+                    // TODO: there should be the span of `expr`.
+                    return Err(Error::bool_arithmetic(todo!("missing span")));
+                }
+                Self {
+                    ty: typed_e.ty,
+                    kind: ExprKind::Minus(Box::new(typed_e)),
+                }
+            }
+            PExpr::MathBinOp(left, op, right) => {
+                let typed_left = Self::do_stuff(*left, context, node_types, first_index, None)?;
+                let typed_right = Self::do_stuff(*right, context, node_types, first_index, None)?;
+                if typed_left.ty != typed_right.ty {
+                    // TODO: there should be the span of `expr`.
+                    return Err(Error::type_mismatch(todo!("missing span"), typed_left.ty, typed_right.ty));
+                }
+
+                let ty = typed_left.ty;
+                if ty == Type::Bool {
+                    // TODO: there should be the span of `expr`.
+                    return Err(Error::bool_arithmetic(todo!("missing span")));
+                }
+                Self {
+                    ty,
+                    kind: ExprKind::BinOp(Box::new(typed_left), op, Box::new(typed_right)),
+                }
+            }
+            PExpr::If(cond, then_branch, else_branch) => {
+                let typed_then =
+                    Self::do_stuff(*then_branch, context, node_types, first_index, None)?;
+                let typed_else =
+                    Self::do_stuff(*else_branch, context, node_types, first_index, None)?;
+                let typed_cond = Self::do_stuff(*cond, context, node_types, first_index, None)?;
+                if typed_then.ty != typed_else.ty {
+                    // TODO: there should be the span of `expr`
+                    return Err(Error::type_mismatch(todo!("missing span"), typed_then.ty, typed_else.ty));
+                }
+                if typed_cond.ty != Type::Bool {
+                    // TODO: there should be the span of `expr`
+                    return Err(Error::non_bool_cond(todo!("missing span")));
+                }
+
+                let ty = typed_then.ty;
+
+                Self {
+                    ty,
+                    kind: ExprKind::If(
+                        Box::new(typed_cond),
+                        Box::new(typed_then),
+                        Box::new(typed_else),
+                    ),
+                }
+            }
+            PExpr::Int(i) => Self {
+                ty: Type::Int64,
+                kind: ExprKind::Int(i),
+            },
+            PExpr::Float(f) => Self {
+                ty: Type::Float64,
+                kind: ExprKind::Float(f),
+            },
+            PExpr::Bool(b) => Self {
+                ty: Type::Bool,
+                kind: ExprKind::Bool(b),
+            },
+            PExpr::FloatCast(casted) => {
+                let typed_casted = Self::do_stuff(*casted, context, node_types, first_index, None)?;
+                match typed_casted.ty {
+                    Type::Int64 | Type::Float64 => {}
+                    Type::Bool => return Err(Error::bool_arithmetic(todo!("missing span"))),
+                }
+                Self {
+                    ty: Type::Float64,
+                    kind: ExprKind::FloatCast(Box::new(typed_casted)),
+                }
+            }
+            PExpr::FunCall(f, args) => {
+                let f_symb = f.to_string();
+                let typed_args = args
+                    .into_iter()
+                    .map(|arg| Self::do_stuff(arg, context, node_types, first_index, None))
+                    .collect::<Result<_, _>>()?;
+                let ty = if let Some(node_type) = node_types.get(&f_symb) {
+                    match node_type.ret_types[..] {
+                        [ty] => ty,
+                        _ => todo!("Destructuring tuples is not implemented yet..."),
+                    }
+                } else if let Some(ty) = toplevel_type {
+                    ty
+                } else {
+                    // Raise error
+                    return Err(Error::external_symbol_not_toplevel(f.span(), f.to_string()));
+                };
+
+                Self {
+                    ty,
+                    kind: ExprKind::FunCall {
+                        function: f,
+                        arguments: typed_args,
+                    },
+                }
+            }
+        })
+    }
+}
+
+pub enum ExprKind {
+    Var(Ident),
+    Pre(Box<Expr>),
+    Then(Box<Expr>, Box<Expr>),
+    Minus(Box<Expr>),
+    BinOp(Box<Expr>, MathBinOp, Box<Expr>),
+    If(Box<Expr>, Box<Expr>, Box<Expr>),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    FloatCast(Box<Expr>),
+    FunCall {
+        function: Ident,
+        arguments: Vec<Expr>,
+    },
+}

@@ -1,4 +1,7 @@
 use proc_macro2::Span;
+use std::fmt::Display;
+
+use patricia_tree::StringPatriciaMap;
 use syn::{
     braced, parenthesized,
     parse::{Parse, ParseStream},
@@ -16,7 +19,8 @@ mod kw {
     custom_keyword!(pre);
 }
 
-enum Type {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Type {
     Int64,
     Float64,
     Bool,
@@ -59,10 +63,20 @@ impl Parse for TypeSpan {
     }
 }
 
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Int64 => write!(f, "int"),
+            Type::Float64 => write!(f, "float"),
+            Type::Bool => write!(f, "bool"),
+        }
+    }
+}
+
 pub struct NodeParam {
-    id: Ident,
-    ty: Type,
-    span: Span,
+    pub id: Ident,
+    pub ty: Type,
+    pub span: Span,
 }
 
 impl Parse for NodeParam {
@@ -76,7 +90,7 @@ impl Parse for NodeParam {
     }
 }
 
-pub struct NodeParams(Vec<NodeParam>);
+pub struct NodeParams(pub Vec<NodeParam>);
 
 impl Parse for NodeParams {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -94,7 +108,7 @@ impl Parse for NodeParams {
     }
 }
 
-pub struct NodeReturn(Vec<Ident>);
+pub struct NodeReturn(pub Vec<Ident>);
 
 impl Parse for NodeReturn {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -107,9 +121,9 @@ impl Parse for NodeReturn {
                 Pair::Punctuated(t, _) | Pair::End(t) => t,
             })
             .collect();
-        if ret.is_empty() {
-            return Err(input.error("Can't return no value"));
-        }
+        // if ret.is_empty() {
+        //     return Err(input.error("Can't return no value"));
+        // }
         Ok(NodeReturn(ret))
     }
 }
@@ -217,7 +231,7 @@ impl ExprSpan {
 
 mod expr_internals {
     use syn::{spanned::Spanned, token::Brace};
-
+    
     use super::*;
 
     pub(super) enum Expr0 {
@@ -786,9 +800,10 @@ impl Parse for ExprSpan {
     }
 }
 
+
 pub struct DeclVar {
-    id: Ident,
-    ty: Type,
+    pub id: Ident,
+    pub ty: Type,
 }
 
 impl Parse for DeclVar {
@@ -801,8 +816,8 @@ impl Parse for DeclVar {
 }
 
 pub struct Decl {
-    vars: Vec<DeclVar>,
-    expr: ExprSpan,
+    pub vars: Vec<DeclVar>,
+    pub expr: ExprSpan,
 }
 
 impl Parse for Decl {
@@ -834,7 +849,7 @@ impl Parse for Decl {
     }
 }
 
-pub struct Body(Vec<Decl>);
+pub struct Body(pub Vec<Decl>);
 
 impl Parse for Body {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -853,10 +868,37 @@ impl Parse for Body {
 }
 
 pub struct Node {
-    name: Ident,
-    params: NodeParams,
-    ret: NodeReturn,
-    body: Body,
+    pub name: Ident,
+    pub params: NodeParams,
+    pub ret: NodeReturn,
+    pub body: Body,
+}
+
+pub struct NodeType {
+    pub arg_types: Vec<Type>,
+    pub ret_types: Vec<Type>,
+}
+
+impl Node {
+    pub fn return_types(&self) -> Result<NodeType, Error> {
+        let mut types = StringPatriciaMap::new();
+        for equation in self.body.0.iter() {
+            types.insert(equation.id.to_string(), equation.ty);
+        }
+        let ret_types = self
+            .ret
+            .0
+            .iter()
+            .map(|ident| {
+                types
+                    .get(ident.to_string())
+                    .copied()
+                    .ok_or_else(|| Error::undef_var(ident))
+            })
+            .collect::<Result<_, _>>()?;
+        let arg_types = self.params.0.iter().map(|arg| arg.ty).collect();
+        Ok(NodeType { arg_types, ret_types })
+    }
 }
 
 impl Parse for Node {
@@ -876,7 +918,7 @@ impl Parse for Node {
     }
 }
 
-pub struct Nodes(Vec<Node>);
+pub struct Nodes(pub Vec<Node>);
 
 impl Parse for Nodes {
     fn parse(input: ParseStream) -> syn::Result<Self> {
