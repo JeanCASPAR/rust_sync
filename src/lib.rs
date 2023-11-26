@@ -3,9 +3,9 @@ use syn::parse_macro_input;
 
 extern crate proc_macro;
 
+mod error;
 mod parser;
 mod typing;
-mod error;
 
 #[proc_macro_error]
 #[proc_macro]

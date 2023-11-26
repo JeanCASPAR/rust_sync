@@ -1,4 +1,5 @@
 use proc_macro2::Span;
+use smallvec::SmallVec;
 use std::fmt::Display;
 
 use patricia_tree::StringPatriciaMap;
@@ -22,63 +23,103 @@ mod kw {
     custom_keyword!(whennot);
 }
 
-#[derive(Clone, PartialEq, Eq)]
-pub enum Type {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaseType {
     Unit,
     Int64,
     Float64,
     Bool,
-    When(Box<Type>, Ident),
-    WhenNot(Box<Type>, Ident),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClockType {
+    pub positive: bool,
+    pub clock: Ident,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Type {
+    pub base: BaseType,
+    /// `clock = vec![a, b, c]` means `base on a on b on c`, where `a`, `b` and `c` are
+    /// `ClockType`s.
+    pub clocks: Vec<ClockType>,
+}
+
+pub type Types = SmallVec<[Type; 4]>;
+
+impl From<BaseType> for Type {
+    fn from(base: BaseType) -> Self {
+        Self {
+            base,
+            clocks: Vec::new(),
+        }
+    }
 }
 
 impl Parse for Type {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        Ok(input.parse::<TypeSpan>()?.inner())
+        Ok(input.parse::<Spanned<Type>>()?.inner())
     }
 }
 
-struct TypeSpan {
-    inner: Type,
-    span: Span,
+pub struct Spanned<T> {
+    pub inner: T,
+    pub span: Span,
 }
 
-impl TypeSpan {
+impl<T> Spanned<T> {
     fn span(&self) -> Span {
         self.span
     }
 
-    fn inner(self) -> Type {
+    fn inner(self) -> T {
         self.inner
     }
 }
 
-impl Parse for TypeSpan {
+impl Parse for Spanned<Type> {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let ty_name = input.parse::<Ident>()?;
-        let ty = match &ty_name.to_string() as &str {
-            "int" => Type::Int64,
-            "float" => Type::Float64,
-            "bool" => Type::Bool,
+        let base_type = match &ty_name.to_string() as &str {
+            "int" => BaseType::Int64,
+            "float" => BaseType::Float64,
+            "bool" => BaseType::Bool,
             s => return Err(input.error(format!("Expected type int, float or bool, got {}", s))),
         };
-        Ok(TypeSpan {
-            inner: ty,
+        Ok(Spanned {
+            inner: base_type.into(),
             span: ty_name.span(),
         })
     }
 }
 
-impl Display for Type {
+impl Display for BaseType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Type::Unit => write!(f, "unit"),
-            Type::Int64 => write!(f, "int"),
-            Type::Float64 => write!(f, "float"),
-            Type::Bool => write!(f, "bool"),
-            Type::When(ty, v) => write!(f, "{} on {}", ty, v),
-            Type::WhenNot(ty, v) => write!(f, "{} on not {}", ty, v),
+            BaseType::Unit => write!(f, "unit"),
+            BaseType::Int64 => write!(f, "int"),
+            BaseType::Float64 => write!(f, "float"),
+            BaseType::Bool => write!(f, "bool"),
         }
+    }
+}
+
+impl Display for ClockType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.positive {
+            write!(f, "!")?;
+        }
+        write!(f, "{}", self.clock)
+    }
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.base)?;
+        for clock in self.clocks.iter() {
+            write!(f, " on {clock}")?;
+        }
+        Ok(())
     }
 }
 
@@ -217,37 +258,26 @@ pub enum MathBinOp {
 /// spans correspond to operators and constants
 pub enum Expr {
     Var(Ident),
-    Pre(Span, Box<ExprSpan>),
-    Then(Box<ExprSpan>, Span, Box<ExprSpan>),
-    Minus(Span, Box<ExprSpan>),
-    Not(Span, Box<ExprSpan>),
-    MathBinOp(Box<ExprSpan>, MathBinOp, Span, Box<ExprSpan>),
-    If(Box<ExprSpan>, Box<ExprSpan>, Box<ExprSpan>),
+    Pre(Span, Box<Spanned<Expr>>),
+    Then(Box<Spanned<Expr>>, Span, Box<Spanned<Expr>>),
+    Minus(Span, Box<Spanned<Expr>>),
+    Not(Span, Box<Spanned<Expr>>),
+    MathBinOp(Box<Spanned<Expr>>, MathBinOp, Span, Box<Spanned<Expr>>),
+    If(Box<Spanned<Expr>>, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Int(i64, Span),
     Float(f64, Span),
     Bool(bool, Span),
     /// cast an int to a float
-    FloatCast(Box<ExprSpan>),
-    FunCall(Ident, Vec<ExprSpan>),
+    FloatCast(Box<Spanned<Expr>>),
+    FunCall(Ident, Vec<Spanned<Expr>>),
     Unit,
-    Merge(Ident, Box<ExprSpan>, Box<ExprSpan>),
-    When(Box<ExprSpan>, Span, Ident),
-    WhenNot(Box<ExprSpan>, Span, Ident),
-}
-pub struct ExprSpan(Expr, Span);
-
-impl ExprSpan {
-    pub fn inner(self) -> Expr {
-        self.0
-    }
-
-    pub fn span(&self) -> Span {
-        self.1
-    }
+    Merge(Ident, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
+    When(Box<Spanned<Expr>>, Span, Ident),
+    WhenNot(Box<Spanned<Expr>>, Span, Ident),
 }
 
 mod expr_internals {
-    use syn::spanned::Spanned;
+    use syn::spanned::Spanned as SynSpanned;
 
     use super::*;
 
@@ -274,18 +304,24 @@ mod expr_internals {
         }
     }
 
-    impl Into<ExprSpan> for Expr0 {
-        fn into(self) -> ExprSpan {
+    impl Into<Spanned<Expr>> for Expr0 {
+        fn into(self) -> Spanned<Expr> {
             match self {
                 Self::When(e, sp, id) => {
-                    let e: ExprSpan = (*e).into();
-                    let sp = e.span().join(sp).unwrap().join(id.span()).unwrap();
-                    ExprSpan(Expr::When(Box::new(e), sp, id), sp)
+                    let e: Spanned<Expr> = (*e).into();
+                    let span = e.span().join(sp).unwrap().join(id.span()).unwrap();
+                    Spanned {
+                        inner: Expr::When(Box::new(e), sp, id),
+                        span,
+                    }
                 }
                 Self::WhenNot(e, sp, id) => {
-                    let e: ExprSpan = (*e).into();
-                    let sp = e.span().join(sp).unwrap().join(id.span()).unwrap();
-                    ExprSpan(Expr::WhenNot(Box::new(e), sp, id), sp)
+                    let e: Spanned<Expr> = (*e).into();
+                    let span = e.span().join(sp).unwrap().join(id.span()).unwrap();
+                    Spanned {
+                        inner: Expr::WhenNot(Box::new(e), sp, id),
+                        span,
+                    }
                 }
                 Self::Down(e) => (*e).into(),
             }
@@ -311,14 +347,17 @@ mod expr_internals {
         }
     }
 
-    impl Into<ExprSpan> for Expr1 {
-        fn into(self) -> ExprSpan {
+    impl Into<Spanned<Expr>> for Expr1 {
+        fn into(self) -> Spanned<Expr> {
             match self {
                 Self::Then(e1, sp, e2) => {
-                    let e1: ExprSpan = (*e1).into();
-                    let e2: ExprSpan = (*e2).into();
+                    let e1: Spanned<Expr> = (*e1).into();
+                    let e2: Spanned<Expr> = (*e2).into();
                     let span = e1.span().join(e2.span()).unwrap();
-                    ExprSpan(Expr::Then(Box::new(e1), sp, Box::new(e2)), span)
+                    Spanned {
+                        inner: Expr::Then(Box::new(e1), sp, Box::new(e2)),
+                        span,
+                    }
                 }
                 Self::Down(e) => (*e).into(),
             }
@@ -335,8 +374,8 @@ mod expr_internals {
         }
     }
 
-    impl Into<ExprSpan> for Expr2 {
-        fn into(self) -> ExprSpan {
+    impl Into<Spanned<Expr>> for Expr2 {
+        fn into(self) -> Spanned<Expr> {
             let e = (*self.0).into();
             self.1.into_with_ctx(e)
         }
@@ -369,25 +408,25 @@ mod expr_internals {
     }
 
     impl Expr2bis {
-        fn into_with_ctx(self, e: ExprSpan) -> ExprSpan {
+        fn into_with_ctx(self, e: Spanned<Expr>) -> Spanned<Expr> {
             match self {
                 Self::Add(sp, e1, e2) => {
                     let spe = e.span();
-                    let e1: ExprSpan = (*e1).into();
+                    let e1: Spanned<Expr> = (*e1).into();
                     let sp1 = e1.span();
-                    (*e2).into_with_ctx(ExprSpan(
-                        Expr::MathBinOp(Box::new(e), MathBinOp::Add, sp, Box::new(e1)),
-                        spe.join(sp1).unwrap(),
-                    ))
+                    (*e2).into_with_ctx(Spanned {
+                        inner: Expr::MathBinOp(Box::new(e), MathBinOp::Add, sp, Box::new(e1)),
+                        span: spe.join(sp1).unwrap(),
+                    })
                 }
                 Self::Sub(sp, e1, e2) => {
                     let spe = e.span();
-                    let e1: ExprSpan = (*e1).into();
+                    let e1: Spanned<Expr> = (*e1).into();
                     let sp1 = e1.span();
-                    (*e2).into_with_ctx(ExprSpan(
-                        Expr::MathBinOp(Box::new(e), MathBinOp::Sub, sp, Box::new(e1)),
-                        spe.join(sp1).unwrap(),
-                    ))
+                    (*e2).into_with_ctx(Spanned {
+                        inner: Expr::MathBinOp(Box::new(e), MathBinOp::Sub, sp, Box::new(e1)),
+                        span: spe.join(sp1).unwrap(),
+                    })
                 }
                 Self::Empty => e,
             }
@@ -404,8 +443,8 @@ mod expr_internals {
         }
     }
 
-    impl Into<ExprSpan> for Expr3 {
-        fn into(self) -> ExprSpan {
+    impl Into<Spanned<Expr>> for Expr3 {
+        fn into(self) -> Spanned<Expr> {
             let e = (*self.0).into();
             self.1.into_with_ctx(e)
         }
@@ -445,34 +484,34 @@ mod expr_internals {
     }
 
     impl Expr3bis {
-        fn into_with_ctx(self, e: ExprSpan) -> ExprSpan {
+        fn into_with_ctx(self, e: Spanned<Expr>) -> Spanned<Expr> {
             match self {
                 Self::Mul(sp, e1, e2) => {
                     let spe = e.span();
-                    let e1: ExprSpan = (*e1).into();
+                    let e1: Spanned<Expr> = (*e1).into();
                     let sp1 = e1.span();
-                    (*e2).into_with_ctx(ExprSpan(
-                        Expr::MathBinOp(Box::new(e), MathBinOp::Mul, sp, Box::new(e1)),
-                        spe.join(sp1).unwrap(),
-                    ))
+                    (*e2).into_with_ctx(Spanned {
+                        inner: Expr::MathBinOp(Box::new(e), MathBinOp::Mul, sp, Box::new(e1)),
+                        span: spe.join(sp1).unwrap(),
+                    })
                 }
                 Self::Div(sp, e1, e2) => {
                     let spe = e.span();
-                    let e1: ExprSpan = (*e1).into();
+                    let e1: Spanned<Expr> = (*e1).into();
                     let sp1 = e1.span();
-                    (*e2).into_with_ctx(ExprSpan(
-                        Expr::MathBinOp(Box::new(e), MathBinOp::Div, sp, Box::new(e1)),
-                        spe.join(sp1).unwrap(),
-                    ))
+                    (*e2).into_with_ctx(Spanned {
+                        inner: Expr::MathBinOp(Box::new(e), MathBinOp::Div, sp, Box::new(e1)),
+                        span: spe.join(sp1).unwrap(),
+                    })
                 }
                 Self::Rem(sp, e1, e2) => {
                     let spe = e.span();
-                    let e1: ExprSpan = (*e1).into();
+                    let e1: Spanned<Expr> = (*e1).into();
                     let sp1 = e1.span();
-                    (*e2).into_with_ctx(ExprSpan(
-                        Expr::MathBinOp(Box::new(e), MathBinOp::Rem, sp, Box::new(e1)),
-                        spe.join(sp1).unwrap(),
-                    ))
+                    (*e2).into_with_ctx(Spanned {
+                        inner: Expr::MathBinOp(Box::new(e), MathBinOp::Rem, sp, Box::new(e1)),
+                        span: spe.join(sp1).unwrap(),
+                    })
                 }
                 Self::Empty => e,
             }
@@ -503,18 +542,24 @@ mod expr_internals {
         }
     }
 
-    impl Into<ExprSpan> for Expr4 {
-        fn into(self) -> ExprSpan {
+    impl Into<Spanned<Expr>> for Expr4 {
+        fn into(self) -> Spanned<Expr> {
             match self {
                 Self::Minus(opspan, e) => {
-                    let e: ExprSpan = (*e).into();
+                    let e: Spanned<Expr> = (*e).into();
                     let span = opspan.join(e.span()).unwrap();
-                    ExprSpan(Expr::Minus(opspan, Box::new(e)), span)
+                    Spanned {
+                        inner: Expr::Minus(opspan, Box::new(e)),
+                        span,
+                    }
                 }
                 Self::Pre(opspan, e) => {
-                    let e: ExprSpan = (*e).into();
+                    let e: Spanned<Expr> = (*e).into();
                     let span = opspan.join(e.span()).unwrap();
-                    ExprSpan(Expr::Pre(opspan, Box::new(e)), span)
+                    Spanned {
+                        inner: Expr::Pre(opspan, Box::new(e)),
+                        span,
+                    }
                 }
                 Self::Down(e) => (*e).into(),
             }
@@ -531,10 +576,10 @@ mod expr_internals {
             let e = input.parse::<Expr6>()?;
             if input.peek(Token![as]) {
                 let _ = input.parse::<Token![as]>()?;
-                let ty = input.parse::<TypeSpan>()?;
+                let ty = input.parse::<Spanned<Type>>()?;
                 let span = ty.span();
-                match ty.inner() {
-                    Type::Float64 => Ok(Expr5::FloatCast(Box::new(e), span)),
+                match ty.inner().base {
+                    BaseType::Float64 => Ok(Expr5::FloatCast(Box::new(e), span)),
                     _ => Err(input.error("You can only cast to float")),
                 }
             } else {
@@ -543,13 +588,16 @@ mod expr_internals {
         }
     }
 
-    impl Into<ExprSpan> for Expr5 {
-        fn into(self) -> ExprSpan {
+    impl Into<Spanned<Expr>> for Expr5 {
+        fn into(self) -> Spanned<Expr> {
             match self {
                 Self::FloatCast(e, sp) => {
-                    let e: ExprSpan = (*e).into();
+                    let e: Spanned<Expr> = (*e).into();
                     let span = e.span().join(sp).unwrap();
-                    ExprSpan(Expr::FloatCast(Box::new(e)), span)
+                    Spanned {
+                        inner: Expr::FloatCast(Box::new(e)),
+                        span,
+                    }
                 }
                 Self::Down(e) => (*e).into(),
             }
@@ -596,8 +644,8 @@ mod expr_internals {
         }
     }
 
-    impl Into<ExprSpan> for Expr6 {
-        fn into(self) -> ExprSpan {
+    impl Into<Spanned<Expr>> for Expr6 {
+        fn into(self) -> Spanned<Expr> {
             let (e0, op, opspan, e1) = match self {
                 Self::Ge(e0, opspan, e1) => (e0, MathBinOp::Ge, opspan, e1),
                 Self::Gt(e0, opspan, e1) => (e0, MathBinOp::Gt, opspan, e1),
@@ -607,13 +655,13 @@ mod expr_internals {
                 Self::NEq(e0, opspan, e1) => (e0, MathBinOp::NEq, opspan, e1),
                 Self::Down(e) => return (*e).into(),
             };
-            let e0: ExprSpan = (*e0).into();
-            let e1: ExprSpan = (*e1).into();
+            let e0: Spanned<Expr> = (*e0).into();
+            let e1: Spanned<Expr> = (*e1).into();
             let span = e0.span().join(e1.span()).unwrap();
-            ExprSpan(
-                Expr::MathBinOp(Box::new(e0), op, opspan, Box::new(e1)),
+            Spanned {
+                inner: Expr::MathBinOp(Box::new(e0), op, opspan, Box::new(e1)),
                 span,
-            )
+            }
         }
     }
 
@@ -633,13 +681,16 @@ mod expr_internals {
         }
     }
 
-    impl Into<ExprSpan> for Expr7 {
-        fn into(self) -> ExprSpan {
+    impl Into<Spanned<Expr>> for Expr7 {
+        fn into(self) -> Spanned<Expr> {
             match self {
                 Self::Not(opspan, e) => {
-                    let e: ExprSpan = (*e).into();
+                    let e: Spanned<Expr> = (*e).into();
                     let span = opspan.join(e.span()).unwrap();
-                    ExprSpan(Expr::Not(opspan, Box::new(e)), span)
+                    Spanned {
+                        inner: Expr::Not(opspan, Box::new(e)),
+                        span,
+                    }
                 }
                 Self::Down(e) => (*e).into(),
             }
@@ -654,9 +705,9 @@ mod expr_internals {
         }
     }
 
-    impl Into<ExprSpan> for Expr8 {
-        fn into(self) -> ExprSpan {
-            let e0: ExprSpan = (*self.0).into();
+    impl Into<Spanned<Expr>> for Expr8 {
+        fn into(self) -> Spanned<Expr> {
+            let e0: Spanned<Expr> = (*self.0).into();
             self.1.into_with_ctx(e0)
         }
     }
@@ -680,15 +731,15 @@ mod expr_internals {
     }
 
     impl Expr8bis {
-        fn into_with_ctx(self, e: ExprSpan) -> ExprSpan {
+        fn into_with_ctx(self, e: Spanned<Expr>) -> Spanned<Expr> {
             match self {
                 Self::And(opspan, e1, e2) => {
-                    let e1: ExprSpan = (*e1).into();
+                    let e1: Spanned<Expr> = (*e1).into();
                     let span = e.span().join(e1.span()).unwrap();
-                    e2.into_with_ctx(ExprSpan(
-                        Expr::MathBinOp(Box::new(e), MathBinOp::And, opspan, Box::new(e1)),
+                    e2.into_with_ctx(Spanned {
+                        inner: Expr::MathBinOp(Box::new(e), MathBinOp::And, opspan, Box::new(e1)),
                         span,
-                    ))
+                    })
                 }
                 Self::Empty => e,
             }
@@ -703,8 +754,8 @@ mod expr_internals {
         }
     }
 
-    impl Into<ExprSpan> for Expr9 {
-        fn into(self) -> ExprSpan {
+    impl Into<Spanned<Expr>> for Expr9 {
+        fn into(self) -> Spanned<Expr> {
             let e0 = (*self.0).into();
             self.1.into_with_ctx(e0)
         }
@@ -729,15 +780,15 @@ mod expr_internals {
     }
 
     impl Expr9bis {
-        fn into_with_ctx(self, e: ExprSpan) -> ExprSpan {
+        fn into_with_ctx(self, e: Spanned<Expr>) -> Spanned<Expr> {
             match self {
                 Self::Or(opspan, e1, e2) => {
-                    let e1: ExprSpan = (*e1).into();
+                    let e1: Spanned<Expr> = (*e1).into();
                     let span = e.span().join(e1.span()).unwrap();
-                    e2.into_with_ctx(ExprSpan(
-                        Expr::MathBinOp(Box::new(e), MathBinOp::Or, opspan, Box::new(e1)),
+                    e2.into_with_ctx(Spanned {
+                        inner: Expr::MathBinOp(Box::new(e), MathBinOp::Or, opspan, Box::new(e1)),
                         span,
-                    ))
+                    })
                 }
                 Self::Empty => e,
             }
@@ -847,48 +898,66 @@ mod expr_internals {
         }
     }
 
-    impl Into<ExprSpan> for Expr10 {
-        fn into(self) -> ExprSpan {
+    impl Into<Spanned<Expr>> for Expr10 {
+        fn into(self) -> Spanned<Expr> {
             match self {
                 Self::If(sp1, cond, e1, e2, sp2) => {
                     let cond = (*cond).into();
-                    let e1: ExprSpan = (*e1).into();
-                    let e2: ExprSpan = (*e2).into();
+                    let e1: Spanned<Expr> = (*e1).into();
+                    let e2: Spanned<Expr> = (*e2).into();
 
-                    ExprSpan(
-                        Expr::If(Box::new(cond), Box::new(e1), Box::new(e2)),
-                        sp1.join(sp2).unwrap(),
-                    )
+                    Spanned {
+                        inner: Expr::If(Box::new(cond), Box::new(e1), Box::new(e2)),
+                        span: sp1.join(sp2).unwrap(),
+                    }
                 }
                 Self::Paren(sp1, e, sp2) => {
-                    let e: ExprSpan = (*e).into();
-                    ExprSpan(e.inner(), sp1.join(sp2).unwrap())
+                    let e: Spanned<Expr> = (*e).into();
+                    Spanned {
+                        span: sp1.join(sp2).unwrap(),
+                        ..e
+                    }
                 }
-                Self::Int(n, sp) => ExprSpan(Expr::Int(n, sp), sp),
-                Self::Float(x, sp) => ExprSpan(Expr::Float(x, sp), sp),
-                Self::Bool(b, sp) => ExprSpan(Expr::Bool(b, sp), sp),
+                Self::Int(n, sp) => Spanned {
+                    inner: Expr::Int(n, sp),
+                    span: sp,
+                },
+                Self::Float(x, sp) => Spanned {
+                    inner: Expr::Float(x, sp),
+                    span: sp,
+                },
+                Self::Bool(b, sp) => Spanned {
+                    inner: Expr::Bool(b, sp),
+                    span: sp,
+                },
                 Self::Var(id) => {
                     let span = id.span();
-                    ExprSpan(Expr::Var(id), span)
+                    Spanned {
+                        inner: Expr::Var(id),
+                        span,
+                    }
                 }
                 Self::FunCall(id, args, sp) => {
                     let span = id.span().join(sp).unwrap();
-                    ExprSpan(
-                        Expr::FunCall(id, args.into_iter().map(Into::into).collect()),
+                    Spanned {
+                        inner: Expr::FunCall(id, args.into_iter().map(Into::into).collect()),
                         span,
-                    )
+                    }
                 }
-                Self::Unit(span) => ExprSpan(Expr::Unit, span),
-                Self::Merge(id, e1, e2, span) => ExprSpan(
-                    Expr::Merge(id, Box::new((*e1).into()), Box::new((*e2).into())),
+                Self::Unit(span) => Spanned {
+                    inner: Expr::Unit,
                     span,
-                ),
+                },
+                Self::Merge(id, e1, e2, span) => Spanned {
+                    inner: Expr::Merge(id, Box::new((*e1).into()), Box::new((*e2).into())),
+                    span,
+                },
             }
         }
     }
 }
 
-impl Parse for ExprSpan {
+impl Parse for Spanned<Expr> {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let e = input.parse::<expr_internals::Expr0>()?;
 
@@ -912,7 +981,7 @@ impl Parse for DeclVar {
 
 pub struct Decl {
     pub vars: Vec<DeclVar>,
-    pub expr: ExprSpan,
+    pub expr: Spanned<Expr>,
 }
 
 impl Parse for Decl {
@@ -938,7 +1007,7 @@ impl Parse for Decl {
         };
 
         let _ = input.parse::<Token![=]>()?;
-        let expr = input.parse::<ExprSpan>()?;
+        let expr = input.parse::<Spanned<Expr>>()?;
 
         Ok(Decl { vars, expr })
     }
@@ -974,8 +1043,8 @@ pub struct Node {
 }
 
 pub struct NodeType {
-    pub arg_types: Vec<Type>,
-    pub ret_types: Vec<Type>,
+    pub arg_types: Types,
+    pub ret_types: Types,
 }
 
 impl Node {

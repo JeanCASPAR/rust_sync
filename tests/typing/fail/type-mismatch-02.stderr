@@ -1,0 +1,5 @@
+error: type mismatch: left has type `int`, right has type `float`
+ --> tests/typing/fail/type-mismatch-02.rs:6:20
+  |
+6 |         oh : int = if bye { hello } else { 3.0 };
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

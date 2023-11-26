@@ -1,7 +1,8 @@
+use itertools::Itertools;
 use proc_macro2::{Ident, Span};
 use proc_macro_error::abort;
 
-use crate::parser::Type;
+use crate::parser::{Type, Types};
 
 pub struct Error {
     kind: Box<ErrorKind>,
@@ -9,82 +10,73 @@ pub struct Error {
 }
 
 impl Error {
-    pub fn undef_var(ident: &Ident) -> Self {
+    #[inline]
+    pub fn new(kind: ErrorKind, span: Span) -> Self {
         Self {
-            kind: Box::new(ErrorKind::UndefinedVariable {
-                variable: ident.to_string(),
-            }),
-            span: ident.span(),
+            kind: Box::new(kind),
+            span,
         }
+    }
+
+    pub fn undef_var(ident: &Ident) -> Self {
+        Self::new(
+            ErrorKind::UndefinedVariable {
+                variable: ident.to_string(),
+            },
+            ident.span(),
+        )
     }
 
     pub fn non_bool_cond(span: Span) -> Self {
-        Self {
-            span,
-            kind: Box::new(ErrorKind::NonBoolCond),
-        }
+        Self::new(ErrorKind::NonBoolCond, span)
     }
 
     pub fn external_symbol_not_toplevel(span: Span, symbol: String) -> Self {
-        Self {
-            span,
-            kind: Box::new(ErrorKind::ExternalSymbolNotToplevel { symbol }),
-        }
+        Self::new(ErrorKind::ExternalSymbolNotToplevel { symbol }, span)
     }
 
     pub fn type_mismatch(span: Span, left_type: Type, right_type: Type) -> Self {
-        Self {
-            span,
-            kind: Box::new(ErrorKind::TypeMismatch {
+        Self::new(
+            ErrorKind::TypeMismatch {
                 left_type,
                 right_type,
-            }),
-        }
+            },
+            span,
+        )
     }
 
     pub fn twice_var(name: String, def_span: Span, found_span: Span) -> Self {
-        Self {
-            span: found_span.clone(),
-            kind: Box::new(ErrorKind::TwiceVar { name, def_span }),
-        }
+        Self::new(ErrorKind::TwiceVar { name, def_span }, found_span.clone())
     }
 
     pub fn negative_first_index(span: Span) -> Self {
-        Self {
-            span,
-            kind: Box::new(ErrorKind::NegativeFirstIndex),
-        }
+        Self::new(ErrorKind::NegativeFirstIndex, span)
     }
 
     pub fn then_type_mismatch(span: Span, left_type: Type, right_type: Type) -> Self {
-        Self {
-            span,
-            kind: Box::new(ErrorKind::ThenTypeMismatch {
+        Self::new(
+            ErrorKind::ThenTypeMismatch {
                 left_type,
                 right_type,
-            }),
-        }
+            },
+            span,
+        )
     }
 
     pub fn bool_arithmetic(span: Span) -> Self {
-        Self {
-            span,
-            kind: Box::new(ErrorKind::BoolArithmetic),
-        }
+        Self::new(ErrorKind::BoolArithmetic, span)
     }
 
     pub fn number_logic(span: Span) -> Self {
-        Self {
-            span,
-            kind: Box::new(ErrorKind::NumberLogic),
-        }
+        Self::new(ErrorKind::NumberLogic, span)
     }
 
     pub fn float_cast(span: Span, ty: Type) -> Self {
-        Self {
-            span,
-            kind: Box::new(ErrorKind::FloatCast { ty }),
-        }
+        Self::new(ErrorKind::FloatCast { ty }, span)
+    }
+
+    pub(crate) fn no_tuples(span: Span, types: Types) -> Error {
+        Self::new(ErrorKind::NoTuples { types }, span)
     }
 
     pub fn raise(self) -> ! {
@@ -128,7 +120,7 @@ impl Error {
                 )
             }
             ErrorKind::FloatCast { ty } => {
-                abort!(self.span, "type mismatch: `{ty}` is not castable to float")
+                abort!(self.span, "type mismatch: `{}` is not castable to float", ty)
             }
             ErrorKind::TypeMismatch {
                 left_type,
@@ -147,7 +139,13 @@ impl Error {
             ),
             ErrorKind::ExternalSymbolNotToplevel { symbol } => abort!(
                 self.span,
-                "Rust function call expressions should be assigned to a variable right away"
+                "Rust function call expressions should be assigned to a variable right away";
+                help = "`{}` is an external Rust symbol", symbol
+            ),
+            ErrorKind::NoTuples { types } => abort!(
+                self.span,
+                "tuples don't exist: ({}) is not a valid type...",
+                types.iter().format(", "),
             ),
         }
     }
@@ -164,4 +162,5 @@ pub enum ErrorKind {
     TypeMismatch { left_type: Type, right_type: Type },
     NonBoolCond,
     ExternalSymbolNotToplevel { symbol: String },
+    NoTuples { types: Types },
 }
