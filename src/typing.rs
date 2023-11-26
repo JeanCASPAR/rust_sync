@@ -1,5 +1,6 @@
 use patricia_tree::StringPatriciaMap;
 use proc_macro2::Span;
+use proc_macro_error::OptionExt;
 use syn::Ident;
 
 use crate::{
@@ -51,13 +52,13 @@ impl Node {
             .params
             .0
             .iter()
-            .map(|param| (param.id.to_string(), param.id.span(), param.ty))
+            .map(|param| (param.id.to_string(), param.id.span(), param.ty.clone()))
             .chain(
                 node.body
                     .0
                     .iter()
                     .flat_map(|equation| equation.vars.iter())
-                    .map(|var| (var.id.to_string(), var.id.span(), var.ty)),
+                    .map(|var| (var.id.to_string(), var.id.span(), var.ty.clone())),
             )
         {
             if let Some((_, def_span)) = context.insert(&var_name, (var_type, var_span)) {
@@ -76,7 +77,7 @@ impl Node {
                         .unwrap()
                         .ret_types
                         .iter()
-                        .copied(),
+                        .cloned(),
                 )
                 .collect(),
             name: node.name,
@@ -103,10 +104,10 @@ impl Decl {
         node_types: &Map<NodeType>,
     ) -> Result<Self, Error> {
         let (id, ty) = match &decl.vars[..] {
-            [var] => (var.id.clone(), var.ty),
+            [var] => (var.id.clone(), var.ty.clone()),
             _ => todo!("Destructuring tuples is not implemented yet..."),
         };
-        let expr = Expr::from_untyped(decl.expr, context, node_types, Some(ty))?;
+        let expr = Expr::from_untyped(decl.expr, context, node_types, Some(ty.clone()))?;
         if expr.ty != ty {
             return Err(Error::type_mismatch(id.span(), ty, expr.ty));
         }
@@ -144,19 +145,24 @@ impl Expr {
                 let ty = context
                     .get(var_name)
                     .ok_or_else(|| Error::undef_var(&var))?
-                    .0;
+                    .0
+                    .clone();
                 Self {
                     ty,
                     kind: ExprKind::Var(var),
                 }
             }
+            PExpr::Unit => Self {
+                ty: Type::Unit,
+                kind: ExprKind::Unit,
+            },
             PExpr::Pre(_, e) => {
                 if first_index == 0 {
                     return Err(Error::negative_first_index(span));
                 }
                 let typed_e = Self::do_stuff(*e, context, node_types, first_index - 1, None)?;
                 Self {
-                    ty: typed_e.ty,
+                    ty: typed_e.ty.clone(),
                     kind: ExprKind::Pre(Box::new(typed_e)),
                 }
             }
@@ -167,7 +173,7 @@ impl Expr {
                     return Err(Error::then_type_mismatch(span, head_expr.ty, tail_expr.ty));
                 }
                 Self {
-                    ty: head_expr.ty,
+                    ty: head_expr.ty.clone(),
                     kind: ExprKind::Then(Box::new(head_expr), Box::new(tail_expr)),
                 }
             }
@@ -177,7 +183,7 @@ impl Expr {
                     return Err(Error::bool_arithmetic(span));
                 }
                 Self {
-                    ty: typed_e.ty,
+                    ty: typed_e.ty.clone(),
                     kind: ExprKind::Minus(Box::new(typed_e)),
                 }
             }
@@ -187,7 +193,7 @@ impl Expr {
                     return Err(Error::number_logic(span));
                 }
                 Self {
-                    ty: typed_e.ty,
+                    ty: typed_e.ty.clone(),
                     kind: ExprKind::Not(Box::new(typed_e)),
                 }
             }
@@ -198,7 +204,7 @@ impl Expr {
                     return Err(Error::type_mismatch(span, typed_left.ty, typed_right.ty));
                 }
 
-                let ty = typed_left.ty;
+                let ty = typed_left.ty.clone();
                 if ty == Type::Bool {
                     return Err(Error::bool_arithmetic(span));
                 }
@@ -220,7 +226,7 @@ impl Expr {
                     return Err(Error::non_bool_cond(span));
                 }
 
-                let ty = typed_then.ty;
+                let ty = typed_then.ty.clone();
 
                 Self {
                     ty,
@@ -245,13 +251,66 @@ impl Expr {
             },
             PExpr::FloatCast(casted) => {
                 let typed_casted = Self::do_stuff(*casted, context, node_types, first_index, None)?;
-                match typed_casted.ty {
-                    Type::Int64 | Type::Float64 => {}
-                    Type::Bool => return Err(Error::bool_arithmetic(span)),
+                fn unroll_when(ty: Type) -> Option<Type> {
+                    match ty {
+                        Type::Int64 => Some(Type::Int64),
+                        Type::When(ty, id) => Some(Type::When(Box::new(unroll_when(*ty)?), id)),
+                        Type::WhenNot(ty, id) => {
+                            Some(Type::WhenNot(Box::new(unroll_when(*ty)?), id))
+                        }
+                        Type::Bool | Type::Unit | Type::Float64 => None,
+                    }
                 }
+                let Some(ty) = unroll_when(typed_casted.ty.clone()) else {
+                    return Err(Error::float_cast(span, typed_casted.ty));
+                };
                 Self {
-                    ty: Type::Float64,
+                    ty,
                     kind: ExprKind::FloatCast(Box::new(typed_casted)),
+                }
+            }
+            PExpr::When(e, _, id) => {
+                // TODO: check that the expected type is a when and replace None by the correct type
+                // when implemented
+                let e = Self::do_stuff(*e, context, node_types, first_index, None)?;
+                Self {
+                    ty: Type::When(Box::new(e.ty.clone()), id.clone()),
+                    kind: ExprKind::When(Box::new(e), id),
+                }
+            }
+            PExpr::WhenNot(e, _, id) => {
+                // TODO: check that the expected type is a whennot and replace None by the correct type
+                // when implemented
+                let e = Self::do_stuff(*e, context, node_types, first_index, None)?;
+                Self {
+                    ty: Type::WhenNot(Box::new(e.ty.clone()), id.clone()),
+                    kind: ExprKind::WhenNot(Box::new(e), id),
+                }
+            }
+            PExpr::Merge(id, e_when, e_whennot) => {
+                let e_when = Self::do_stuff(
+                    *e_when,
+                    context,
+                    node_types,
+                    first_index,
+                    toplevel_type
+                        .clone()
+                        .map(|ty| Type::When(Box::new(ty), id.clone())),
+                )?;
+                let e_whennot = Self::do_stuff(
+                    *e_whennot,
+                    context,
+                    node_types,
+                    first_index,
+                    toplevel_type
+                        .clone()
+                        .map(|ty| Type::WhenNot(Box::new(ty), id.clone())),
+                )?;
+
+                // TODO: I assume here than e_when and e_whennot have the good types
+                Self {
+                    ty: toplevel_type.unwrap(),
+                    kind: ExprKind::Merge(id, Box::new(e_when), Box::new(e_whennot)),
                 }
             }
             PExpr::FunCall(f, args) => {
@@ -261,8 +320,8 @@ impl Expr {
                     .map(|arg| Self::do_stuff(arg, context, node_types, first_index, None))
                     .collect::<Result<_, _>>()?;
                 let ty = if let Some(node_type) = node_types.get(&f_symb) {
-                    match node_type.ret_types[..] {
-                        [ty] => ty,
+                    match &node_type.ret_types[..] {
+                        [ty] => ty.clone(),
                         _ => todo!("Destructuring tuples is not implemented yet..."),
                     }
                 } else if let Some(ty) = toplevel_type {
@@ -286,6 +345,7 @@ impl Expr {
 
 pub enum ExprKind {
     Var(Ident),
+    Unit,
     Pre(Box<Expr>),
     Then(Box<Expr>, Box<Expr>),
     Minus(Box<Expr>),
@@ -296,6 +356,9 @@ pub enum ExprKind {
     Float(f64),
     Bool(bool),
     FloatCast(Box<Expr>),
+    When(Box<Expr>, Ident),
+    WhenNot(Box<Expr>, Ident),
+    Merge(Ident, Box<Expr>, Box<Expr>),
     FunCall {
         function: Ident,
         arguments: Vec<Expr>,

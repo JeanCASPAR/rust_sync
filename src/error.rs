@@ -80,6 +80,13 @@ impl Error {
         }
     }
 
+    pub fn float_cast(span: Span, ty: Type) -> Self {
+        Self {
+            span,
+            kind: Box::new(ErrorKind::FloatCast { ty }),
+        }
+    }
+
     pub fn raise(self) -> ! {
         match *self.kind {
             ErrorKind::TwiceVar { name, def_span } => {
@@ -120,6 +127,9 @@ impl Error {
                     "type mismatch: expected `bool`, found `{number}`"
                 )
             }
+            ErrorKind::FloatCast { ty } => {
+                abort!(self.span, "type mismatch: `{ty}` is not castable to float")
+            }
             ErrorKind::TypeMismatch {
                 left_type,
                 right_type,
@@ -149,6 +159,7 @@ pub enum ErrorKind {
     NegativeFirstIndex,
     BoolArithmetic,
     NumberLogic,
+    FloatCast { ty: Type },
     ThenTypeMismatch { left_type: Type, right_type: Type },
     TypeMismatch { left_type: Type, right_type: Type },
     NonBoolCond,
