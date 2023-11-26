@@ -221,17 +221,18 @@ pub enum Expr {
 pub struct ExprSpan(Expr, Span);
 
 impl ExprSpan {
-    fn expr(self) -> Expr {
+    pub fn inner(self) -> Expr {
         self.0
     }
-    fn span(&self) -> Span {
+
+    pub fn span(&self) -> Span {
         self.1
     }
 }
 
 mod expr_internals {
-    use syn::{spanned::Spanned, token::Brace};
-    
+    use syn::spanned::Spanned;
+
     use super::*;
 
     pub(super) enum Expr0 {
@@ -706,7 +707,6 @@ mod expr_internals {
                 braced!(then_branch in input);
                 let e1 = then_branch.parse::<Expr0>()?;
                 let _ = input.parse::<Token![else]>()?;
-                let fork = input.fork();
                 let else_branch;
                 let sp2 = braced!(else_branch in input).span.close();
                 let e2 = else_branch.parse::<Expr0>()?;
@@ -771,7 +771,7 @@ mod expr_internals {
                 }
                 Self::Paren(sp1, e, sp2) => {
                     let e: ExprSpan = (*e).into();
-                    ExprSpan(e.expr(), sp1.join(sp2).unwrap())
+                    ExprSpan(e.inner(), sp1.join(sp2).unwrap())
                 }
                 Self::Int(n, sp) => ExprSpan(Expr::Int(n, sp), sp),
                 Self::Float(x, sp) => ExprSpan(Expr::Float(x, sp), sp),
@@ -799,7 +799,6 @@ impl Parse for ExprSpan {
         Ok(e.into())
     }
 }
-
 
 pub struct DeclVar {
     pub id: Ident,
@@ -883,7 +882,9 @@ impl Node {
     pub fn return_types(&self) -> Result<NodeType, Error> {
         let mut types = StringPatriciaMap::new();
         for equation in self.body.0.iter() {
-            types.insert(equation.id.to_string(), equation.ty);
+            for var in equation.vars.iter() {
+                types.insert(var.id.to_string(), var.ty);
+            }
         }
         let ret_types = self
             .ret
@@ -897,7 +898,10 @@ impl Node {
             })
             .collect::<Result<_, _>>()?;
         let arg_types = self.params.0.iter().map(|arg| arg.ty).collect();
-        Ok(NodeType { arg_types, ret_types })
+        Ok(NodeType {
+            arg_types,
+            ret_types,
+        })
     }
 }
 

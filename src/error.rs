@@ -28,10 +28,10 @@ impl Error {
     pub fn external_symbol_not_toplevel(span: Span, symbol: String) -> Self {
         Self {
             span,
-            kind: Box::new(ErrorKind::ExternalSymbolNotToplevel { symbol })
+            kind: Box::new(ErrorKind::ExternalSymbolNotToplevel { symbol }),
         }
     }
-    
+
     pub fn type_mismatch(span: Span, left_type: Type, right_type: Type) -> Self {
         Self {
             span,
@@ -73,6 +73,13 @@ impl Error {
         }
     }
 
+    pub fn number_logic(span: Span) -> Self {
+        Self {
+            span,
+            kind: Box::new(ErrorKind::NumberLogic),
+        }
+    }
+
     pub fn raise(self) -> ! {
         match *self.kind {
             ErrorKind::TwiceVar { name, def_span } => {
@@ -107,6 +114,12 @@ impl Error {
                     "type mismatch: expected `{number}`, found `bool`"
                 )
             }
+            ErrorKind::NumberLogic => {
+                abort!(
+                    self.span,
+                    "type mismatch: expected `bool`, found `{number}`"
+                )
+            }
             ErrorKind::TypeMismatch {
                 left_type,
                 right_type,
@@ -125,7 +138,7 @@ impl Error {
             ErrorKind::ExternalSymbolNotToplevel { symbol } => abort!(
                 self.span,
                 "Rust function call expressions should be assigned to a variable right away"
-            )
+            ),
         }
     }
 }
@@ -135,8 +148,9 @@ pub enum ErrorKind {
     TwiceVar { name: String, def_span: Span },
     NegativeFirstIndex,
     BoolArithmetic,
+    NumberLogic,
     ThenTypeMismatch { left_type: Type, right_type: Type },
     TypeMismatch { left_type: Type, right_type: Type },
     NonBoolCond,
-    ExternalSymbolNotToplevel { symbol: String, },
+    ExternalSymbolNotToplevel { symbol: String },
 }

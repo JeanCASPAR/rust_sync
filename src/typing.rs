@@ -5,7 +5,8 @@ use syn::Ident;
 use crate::{
     error::Error,
     parser::{
-        Decl as PDecl, Expr as PExpr, MathBinOp, Node as PNode, NodeParams, NodeType, Nodes, Type,
+        Decl as PDecl, Expr as PExpr, ExprSpan as PExprSpan, MathBinOp, Node as PNode, NodeParams,
+        NodeType, Nodes, Type,
     },
 };
 
@@ -55,7 +56,8 @@ impl Node {
                 node.body
                     .0
                     .iter()
-                    .map(|equation| (equation.id.to_string(), equation.id.span(), equation.ty)),
+                    .flat_map(|equation| equation.vars.iter())
+                    .map(|var| (var.id.to_string(), var.id.span(), var.ty)),
             )
         {
             if let Some((_, def_span)) = context.insert(&var_name, (var_type, var_span)) {
@@ -100,15 +102,15 @@ impl Decl {
         context: &Map<(Type, Span)>,
         node_types: &Map<NodeType>,
     ) -> Result<Self, Error> {
-        let expr = Expr::from_untyped(decl.expr, context, node_types, Some(decl.ty))?;
-        if expr.ty != decl.ty {
-            return Err(Error::type_mismatch(decl.id.span(), decl.ty, expr.ty));
+        let (id, ty) = match &decl.vars[..] {
+            [var] => (var.id.clone(), var.ty),
+            _ => todo!("Destructuring tuples is not implemented yet..."),
+        };
+        let expr = Expr::from_untyped(decl.expr, context, node_types, Some(ty))?;
+        if expr.ty != ty {
+            return Err(Error::type_mismatch(id.span(), ty, expr.ty));
         }
-        Ok(Self {
-            id: decl.id,
-            ty: decl.ty,
-            expr,
-        })
+        Ok(Self { id, ty, expr })
     }
 }
 
@@ -119,7 +121,7 @@ pub struct Expr {
 
 impl Expr {
     fn from_untyped(
-        expr: PExpr,
+        expr: PExprSpan,
         context: &Map<(Type, Span)>,
         node_types: &Map<NodeType>,
         toplevel_type: Option<Type>,
@@ -128,12 +130,14 @@ impl Expr {
     }
 
     fn do_stuff(
-        expr: PExpr,
+        expr: PExprSpan,
         context: &Map<(Type, Span)>,
         node_types: &Map<NodeType>,
         first_index: u16,
         toplevel_type: Option<Type>,
     ) -> Result<Self, Error> {
+        let span = expr.span();
+        let expr = expr.inner();
         Ok(match expr {
             PExpr::Var(var) => {
                 let var_name = var.to_string();
@@ -146,10 +150,9 @@ impl Expr {
                     kind: ExprKind::Var(var),
                 }
             }
-            PExpr::Pre(e) => {
+            PExpr::Pre(_, e) => {
                 if first_index == 0 {
-                    // TODO: there should be the span of `expr` here.
-                    return Err(Error::negative_first_index(todo!("missing span")));
+                    return Err(Error::negative_first_index(span));
                 }
                 let typed_e = Self::do_stuff(*e, context, node_types, first_index - 1, None)?;
                 Self {
@@ -157,45 +160,47 @@ impl Expr {
                     kind: ExprKind::Pre(Box::new(typed_e)),
                 }
             }
-            PExpr::Then(head, tail) => {
+            PExpr::Then(head, _, tail) => {
                 let head_expr = Self::do_stuff(*head, context, node_types, first_index, None)?;
                 let tail_expr = Self::do_stuff(*tail, context, node_types, first_index + 1, None)?;
                 if head_expr.ty != tail_expr.ty {
-                    // TODO: there should be the span of `expr`.
-                    return Err(Error::then_type_mismatch(
-                        todo!("missing span"),
-                        head_expr.ty,
-                        tail_expr.ty,
-                    ));
+                    return Err(Error::then_type_mismatch(span, head_expr.ty, tail_expr.ty));
                 }
                 Self {
                     ty: head_expr.ty,
                     kind: ExprKind::Then(Box::new(head_expr), Box::new(tail_expr)),
                 }
             }
-            PExpr::Minus(e) => {
-                let typed_e = Self::do_stuff(*e, context, node_types, first_index - 1, None)?;
+            PExpr::Minus(_, e) => {
+                let typed_e = Self::do_stuff(*e, context, node_types, first_index, None)?;
                 if typed_e.ty == Type::Bool {
-                    // TODO: there should be the span of `expr`.
-                    return Err(Error::bool_arithmetic(todo!("missing span")));
+                    return Err(Error::bool_arithmetic(span));
                 }
                 Self {
                     ty: typed_e.ty,
                     kind: ExprKind::Minus(Box::new(typed_e)),
                 }
             }
-            PExpr::MathBinOp(left, op, right) => {
+            PExpr::Not(_, e) => {
+                let typed_e = Self::do_stuff(*e, context, node_types, first_index, None)?;
+                if typed_e.ty != Type::Bool {
+                    return Err(Error::number_logic(span));
+                }
+                Self {
+                    ty: typed_e.ty,
+                    kind: ExprKind::Not(Box::new(typed_e)),
+                }
+            }
+            PExpr::MathBinOp(left, op, _, right) => {
                 let typed_left = Self::do_stuff(*left, context, node_types, first_index, None)?;
                 let typed_right = Self::do_stuff(*right, context, node_types, first_index, None)?;
                 if typed_left.ty != typed_right.ty {
-                    // TODO: there should be the span of `expr`.
-                    return Err(Error::type_mismatch(todo!("missing span"), typed_left.ty, typed_right.ty));
+                    return Err(Error::type_mismatch(span, typed_left.ty, typed_right.ty));
                 }
 
                 let ty = typed_left.ty;
                 if ty == Type::Bool {
-                    // TODO: there should be the span of `expr`.
-                    return Err(Error::bool_arithmetic(todo!("missing span")));
+                    return Err(Error::bool_arithmetic(span));
                 }
                 Self {
                     ty,
@@ -209,12 +214,10 @@ impl Expr {
                     Self::do_stuff(*else_branch, context, node_types, first_index, None)?;
                 let typed_cond = Self::do_stuff(*cond, context, node_types, first_index, None)?;
                 if typed_then.ty != typed_else.ty {
-                    // TODO: there should be the span of `expr`
-                    return Err(Error::type_mismatch(todo!("missing span"), typed_then.ty, typed_else.ty));
+                    return Err(Error::type_mismatch(span, typed_then.ty, typed_else.ty));
                 }
                 if typed_cond.ty != Type::Bool {
-                    // TODO: there should be the span of `expr`
-                    return Err(Error::non_bool_cond(todo!("missing span")));
+                    return Err(Error::non_bool_cond(span));
                 }
 
                 let ty = typed_then.ty;
@@ -228,15 +231,15 @@ impl Expr {
                     ),
                 }
             }
-            PExpr::Int(i) => Self {
+            PExpr::Int(i, _) => Self {
                 ty: Type::Int64,
                 kind: ExprKind::Int(i),
             },
-            PExpr::Float(f) => Self {
+            PExpr::Float(f, _) => Self {
                 ty: Type::Float64,
                 kind: ExprKind::Float(f),
             },
-            PExpr::Bool(b) => Self {
+            PExpr::Bool(b, _) => Self {
                 ty: Type::Bool,
                 kind: ExprKind::Bool(b),
             },
@@ -244,7 +247,7 @@ impl Expr {
                 let typed_casted = Self::do_stuff(*casted, context, node_types, first_index, None)?;
                 match typed_casted.ty {
                     Type::Int64 | Type::Float64 => {}
-                    Type::Bool => return Err(Error::bool_arithmetic(todo!("missing span"))),
+                    Type::Bool => return Err(Error::bool_arithmetic(span)),
                 }
                 Self {
                     ty: Type::Float64,
@@ -286,6 +289,7 @@ pub enum ExprKind {
     Pre(Box<Expr>),
     Then(Box<Expr>, Box<Expr>),
     Minus(Box<Expr>),
+    Not(Box<Expr>),
     BinOp(Box<Expr>, MathBinOp, Box<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     Int(i64),
