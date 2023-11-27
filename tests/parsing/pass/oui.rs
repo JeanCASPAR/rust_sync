@@ -1,6 +1,10 @@
 use rust_sync::sync;
 
 sync! {
+    #![pass(0)]
+
+    #[export]
+    #[doc = r"return things"]
     node min_max() = (min, max)
     where
         min : int = 0,

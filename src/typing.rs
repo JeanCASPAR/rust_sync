@@ -1,13 +1,12 @@
 use patricia_tree::StringPatriciaMap;
 use proc_macro2::Span;
-use proc_macro_error::OptionExt;
 use syn::Ident;
 
 use crate::{
     error::Error,
     parser::{
-        Decl as PDecl, Expr as PExpr, ExprSpan as PExprSpan, MathBinOp, Node as PNode, NodeParams,
-        NodeType, Nodes, Type,
+        Decl as PDecl, Expr as PExpr, ExprSpan as PExprSpan, MathBinOp, Module, Node as PNode,
+        NodeParams, NodeType, Type,
     },
 };
 
@@ -17,16 +16,16 @@ pub struct Ast {
 
 type Map<T> = StringPatriciaMap<T>;
 
-impl TryFrom<Nodes> for Ast {
+impl TryFrom<Module> for Ast {
     type Error = Error;
-    fn try_from(nodes: Nodes) -> Result<Self, Self::Error> {
+    fn try_from(module: Module) -> Result<Self, Self::Error> {
         let mut node_types = Map::new();
-        for node in nodes.0.iter() {
+        for node in module.nodes.iter() {
             node_types.insert(node.name.to_string(), node.return_types()?);
         }
         Ok(Self {
-            nodes: nodes
-                .0
+            nodes: module
+                .nodes
                 .into_iter()
                 .map(|node| Node::from_untyped(node, &node_types))
                 .collect::<Result<Vec<_>, _>>()?,
