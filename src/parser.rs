@@ -1058,6 +1058,9 @@ impl Node {
                 types.insert(var.id.to_string(), var.ty.clone());
             }
         }
+        for var in self.params.0.iter() {
+            types.insert(var.id.to_string(), var.ty.clone());
+        }
         let ret_types = self
             .ret
             .0
