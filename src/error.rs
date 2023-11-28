@@ -87,6 +87,13 @@ impl Error {
         }
     }
 
+    pub fn cyclic_equation(span: Span) -> Self {
+        Self {
+            span,
+            kind: Box::new(ErrorKind::CyclicEquation),
+        }
+    }
+
     pub fn raise(self) -> ! {
         match *self.kind {
             ErrorKind::TwiceVar { name, def_span } => {
@@ -153,6 +160,7 @@ impl Error {
                 self.span,
                 "Rust function call expressions should be assigned to a variable right away"
             ),
+            ErrorKind::CyclicEquation => todo!("there is a cycle"),
         }
     }
 }
@@ -168,4 +176,5 @@ pub enum ErrorKind {
     TypeMismatch { left_type: Type, right_type: Type },
     NonBoolCond,
     ExternalSymbolNotToplevel { symbol: String },
+    CyclicEquation,
 }

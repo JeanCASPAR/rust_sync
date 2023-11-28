@@ -1,9 +1,9 @@
-use std::fmt::format;
-
 use patricia_tree::StringPatriciaMap;
+use proc_macro2::Span;
 use syn::Ident;
 
 use crate::{
+    error::Error,
     parser::{MathBinOp, Type},
     typing::{Expr as TExpr, ExprKind as TExprKind, Node as TNode},
 };
@@ -64,6 +64,7 @@ struct Context {
     /// of the equation introducing it (0 if it is an input) and whose
     /// second element is the number of the ident in the declaration
     store: StringPatriciaMap<SIdent>,
+    order: Vec<usize>,
 }
 
 impl Context {
@@ -72,10 +73,11 @@ impl Context {
             equations: Vec::new(),
             deps: Vec::new(),
             store: StringPatriciaMap::new(),
+            order: Vec::new(),
         }
     }
 
-    fn schedule_eq(&mut self, node: TNode) {
+    fn schedule_eq(&mut self, node: TNode) -> Result<(), Error> {
         self.equations.push((Vec::new(), EqType::Input));
         self.deps.push(Vec::new());
         for (i, param) in node.params.0.iter().enumerate() {
@@ -103,6 +105,10 @@ impl Context {
             let e = self.normalize_expr(decl.expr, i, true);
             self.equations[i].1 = EqType::Expr(e);
         }
+
+        self.topo_sort()?;
+
+        Ok(())
     }
 
     fn normalize_expr(&mut self, e: TExpr, eq: usize, depends: bool) -> Expr {
@@ -115,7 +121,6 @@ impl Context {
         let kind = match e.kind {
             TExprKind::Var(id) => {
                 let (i, j) = self.store.get(id.to_string()).unwrap().clone();
-                //self.deps[eq].push(i);
                 add_dep(i);
                 ExprKind::Var((i, j))
             }
@@ -168,19 +173,22 @@ impl Context {
                 ExprKind::FloatCast(Box::new(e))
             }
             TExprKind::When(e, id) => {
-                let e = self.normalize_expr(*e, eq, depends);
                 let id = self.store.get(id.to_string()).unwrap().clone();
+                add_dep(id.0);
+                let e = self.normalize_expr(*e, eq, depends);
 
                 ExprKind::When(Box::new(e), id)
             }
             TExprKind::WhenNot(e, id) => {
-                let e = self.normalize_expr(*e, eq, depends);
                 let id = self.store.get(id.to_string()).unwrap().clone();
+                add_dep(id.0);
+                let e = self.normalize_expr(*e, eq, depends);
 
                 ExprKind::WhenNot(Box::new(e), id)
             }
             TExprKind::Merge(id, e_when, e_whennot) => {
                 let id = self.store.get(id.to_string()).unwrap().clone();
+                add_dep(id.0);
                 let e_when = self.normalize_expr(*e_when, eq, depends);
                 let e_whennot = self.normalize_expr(*e_whennot, eq, depends);
 
@@ -193,15 +201,46 @@ impl Context {
         };
         Expr { ty, kind }
     }
+
+    fn topo_sort(&mut self) -> Result<(), Error> {
+        // 0 = not visited, 1 = visiting, 2 = visited
+        let mut visited = vec![0u8; self.deps.len()];
+
+        for i in 0..self.deps.len() {
+            self.visit(i, &mut visited)?;
+        }
+
+        Ok(())
+    }
+
+    fn visit(&mut self, idx: usize, visited: &mut [u8]) -> Result<(), Error> {
+        if visited[idx] == 1 {
+            // TODO: real span
+            return Err(Error::cyclic_equation(Span::call_site()));
+        } else if visited[idx] == 2 {
+            return Ok(());
+        }
+        self.order.push(idx);
+
+        visited[idx] = 1;
+        for j in 0..self.deps[idx].len() {
+            self.visit(self.deps[idx][j], visited)?;
+        }
+        visited[idx] = 2;
+
+        Ok(())
+    }
 }
 
-impl From<TNode> for Node {
-    fn from(node: TNode) -> Self {
+impl TryFrom<TNode> for Node {
+    type Error = Error;
+
+    fn try_from(node: TNode) -> Result<Self, Error> {
         let name = node.name.clone();
         let ret = node.ret.clone();
 
         let mut context = Context::new();
-        context.schedule_eq(node);
+        context.schedule_eq(node)?;
 
         let params = context.equations[0].0.clone();
 
@@ -210,15 +249,15 @@ impl From<TNode> for Node {
             .map(|(id, ty)| (context.store.get(&id.to_string()).unwrap().clone(), ty))
             .collect();
 
-        let order = todo!("topological order on deps");
+        let order = context.order;
 
-        Node {
+        Ok(Node {
             name,
             params,
             ret,
             equations: context.equations,
             deps: context.deps,
             order,
-        }
+        })
     }
 }
