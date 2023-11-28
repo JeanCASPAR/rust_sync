@@ -1,0 +1,5 @@
+error: expected one of: `if`, `merge`, parentheses, integer literal, floating point literal, boolean literal, identifier
+ --> tests/parsing/fail/jean-fait-une-grammaire-01.rs:8:21
+  |
+8 |         x : bool = !!true;
+  |                     ^
