@@ -5,7 +5,9 @@ extern crate proc_macro;
 
 mod error;
 mod parser;
+#[allow(dead_code, unused_variables)]
 mod scheduler;
+#[allow(dead_code, unused_variables)]
 mod typing;
 
 #[proc_macro_error]
@@ -20,6 +22,10 @@ pub fn sync(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             Ok(x) => x,
             Err(err) => err.raise(),
         };
+    }
+
+    if pass != 0 {
+        // Ok...
     }
 
     proc_macro::TokenStream::new()

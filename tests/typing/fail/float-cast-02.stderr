@@ -1,0 +1,5 @@
+error: type mismatch: `float` is not castable to float
+ --> tests/typing/fail/float-cast-02.rs:6:21
+  |
+6 |         a : float = 3.0 as float;
+  |                     ^^^^^^^^^^^^

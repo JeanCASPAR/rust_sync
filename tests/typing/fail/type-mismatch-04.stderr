@@ -1,0 +1,5 @@
+error: type mismatch: `bool` and `int`
+ --> tests/typing/fail/type-mismatch-04.rs:6:19
+  |
+6 |         a : int = false -> 3;
+  |                   ^^^^^^^^^^

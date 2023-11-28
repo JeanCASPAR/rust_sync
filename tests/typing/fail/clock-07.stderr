@@ -1,0 +1,12 @@
+error: clock error: the expression of the true branch has an incompatible clock type
+ --> tests/typing/fail/clock-07.rs:7:21
+  |
+7 |             true => (3.0 when c) when c,
+  |                     ^^^^^^^^^^^^^^^^^^^
+  |
+  = note: its clock type starts with `base on c`
+note: the clock type of c is `base`
+ --> tests/typing/fail/clock-07.rs:6:27
+  |
+6 |         a : float = merge c {
+  |                           ^

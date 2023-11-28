@@ -42,6 +42,7 @@
             rust
             cargo
             cargo-edit
+            cargo-expand
             rustfmt
             rustPackages.clippy
             rust-analyzer

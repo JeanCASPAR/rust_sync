@@ -1,0 +1,5 @@
+error: expected `;`
+ --> tests/parsing/fail/clock-type-01.rs:8:30
+  |
+8 |         a : float = a when c when c;
+  |                              ^^^^

@@ -1,10 +1,11 @@
 use patricia_tree::StringPatriciaMap;
 use proc_macro2::Span;
+use smallvec::SmallVec;
 use syn::Ident;
 
 use crate::{
     error::Error,
-    parser::{MathBinOp, Type},
+    parser::{MathBinOp, Type, Types},
     typing::{Expr as TExpr, ExprKind as TExprKind, Node as TNode},
 };
 
@@ -16,9 +17,9 @@ pub struct Ast {
 
 pub struct Node {
     pub name: Ident,
-    pub params: Vec<Type>,
+    pub params: Types,
     pub ret: Vec<(SIdent, Type)>,
-    pub equations: Vec<(Vec<Type>, EqType)>,
+    pub equations: Vec<(Types, EqType)>,
     pub deps: Vec<Vec<usize>>,
     pub order: Vec<usize>,
 }
@@ -30,7 +31,7 @@ pub enum EqType {
 }
 
 pub struct Expr {
-    ty: Type,
+    ty: Types,
     kind: ExprKind,
 }
 
@@ -57,7 +58,7 @@ pub enum ExprKind {
 }
 
 struct Context {
-    equations: Vec<(Vec<Type>, EqType)>,
+    equations: Vec<(Types, EqType)>,
     /// n € deps[m] if the equation m depends on the equation n
     deps: Vec<Vec<usize>>,
     /// we replace all idents by a pair whose first element is the number
@@ -78,7 +79,7 @@ impl Context {
     }
 
     fn schedule_eq(&mut self, node: TNode) -> Result<(), Error> {
-        self.equations.push((Vec::new(), EqType::Input));
+        self.equations.push((SmallVec::new(), EqType::Input));
         self.deps.push(Vec::new());
         for (i, param) in node.params.0.iter().enumerate() {
             self.equations[0].0.push(param.ty.clone());
@@ -89,20 +90,21 @@ impl Context {
             let i = self.deps.len();
             self.deps.push(Vec::new());
             // dummy EqType::Input here because we cannot yet translate the expression
-            self.equations.push((Vec::new(), EqType::Input));
-            for (j, decl) in [decl].iter().enumerate() {
-                self.equations.last_mut().unwrap().0.push(decl.ty.clone());
-                self.store.insert(decl.id.to_string(), (i, j));
+            self.equations
+                .push((decl.expr.inner.types.clone(), EqType::Input));
+
+            for (j, var) in decl.vars.iter().enumerate() {
+                self.store.insert(var.id.to_string(), (i, j));
             }
         }
 
         for (i, decl) in node.body.into_iter().enumerate() {
             let i = i + 1;
-            match decl.expr.kind {
+            match decl.expr.inner.kind {
                 // TODO: separate node call from other expressions
                 _ => (),
             };
-            let e = self.normalize_expr(decl.expr, i, true);
+            let e = self.normalize_expr(decl.expr.inner, i, true);
             self.equations[i].1 = EqType::Expr(e);
         }
 
@@ -117,7 +119,7 @@ impl Context {
                 self.deps[eq].push(i);
             }
         };
-        let ty = e.ty;
+        let ty = e.types;
         let kind = match e.kind {
             TExprKind::Var(id) => {
                 let (i, j) = self.store.get(id.to_string()).unwrap().clone();
@@ -128,11 +130,11 @@ impl Context {
             TExprKind::Pre(e) => {
                 let s = format!("#{}", self.equations.len());
                 let i = self.equations.len();
-                let ty = e.ty.clone();
+                let ty = ty.clone();
                 self.store.insert(s.clone(), (i, 0));
                 self.deps.push(Vec::new());
 
-                self.equations.push((vec![ty.clone()], EqType::Input));
+                self.equations.push((ty.clone(), EqType::Input));
                 let e = self.normalize_expr(*e, i, true);
                 self.equations[i].1 = EqType::Expr(e);
 
@@ -195,6 +197,7 @@ impl Context {
                 ExprKind::Merge(id, Box::new(e_when), Box::new(e_whennot))
             }
             TExprKind::FunCall {
+                extern_symbol,
                 function,
                 arguments,
             } => todo!(),
