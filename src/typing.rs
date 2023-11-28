@@ -208,13 +208,11 @@ impl Expr {
             PExpr::Then(head, _, tail) => {
                 let head_expr = Self::do_stuff(*head, context, node_types, first_index, None)?;
                 let tail_expr = Self::do_stuff(*tail, context, node_types, first_index + 1, None)?;
-                let head_type = head_expr.types.singleton(span)?;
-                let tail_type = tail_expr.types.singleton(span)?;
-                if head_type != tail_type {
+                if head_expr.types != tail_expr.types {
                     return Err(Error::then_type_mismatch(
                         span,
-                        head_type.clone(),
-                        tail_type.clone(),
+                        head_expr.types,
+                        tail_expr.types,
                     ));
                 }
 
@@ -224,8 +222,9 @@ impl Expr {
                 }
             }
             PExpr::Minus(_, e) => {
+                let e_span = e.span;
                 let typed_e = Self::do_stuff(*e, context, node_types, first_index, None)?;
-                let e_type = typed_e.types.singleton(span)?;
+                let e_type = typed_e.types.singleton(e_span)?;
                 if e_type.base == BaseType::Bool {
                     return Err(Error::bool_arithmetic(span));
                 }
@@ -235,8 +234,9 @@ impl Expr {
                 }
             }
             PExpr::Not(_, e) => {
+                let e_span = e.span;
                 let typed_e = Self::do_stuff(*e, context, node_types, first_index, None)?;
-                let e_type = typed_e.types.singleton(span)?;
+                let e_type = typed_e.types.singleton(e_span)?;
                 if e_type.base != BaseType::Bool {
                     return Err(Error::number_logic(span));
                 }
@@ -337,15 +337,16 @@ impl Expr {
                 if clock_type.base != BaseType::Bool {
                     todo!("raise error: clock not boolean");
                 }
-                let e_span = e.span;
                 let typed_e = Self::do_stuff(*e, context, node_types, first_index, None)?;
-                let mut e_type = typed_e.types.singleton(e_span)?.clone();
-                e_type.clocks.push(ClockType {
-                    positive: true,
-                    clock: clock.clone(),
-                });
+                let mut types = typed_e.types.clone();
+                for e_type in types.iter_mut() {
+                    e_type.clocks.push(ClockType {
+                        positive: true,
+                        clock: clock.clone(),
+                    })
+                }
                 Self {
-                    types: types![e_type],
+                    types,
                     kind: ExprKind::When(Box::new(typed_e), clock),
                 }
             }
@@ -357,16 +358,16 @@ impl Expr {
                 if clock_type.base != BaseType::Bool {
                     todo!("raise error: clock not boolean");
                 }
-
-                let e_span = e.span;
                 let typed_e = Self::do_stuff(*e, context, node_types, first_index, None)?;
-                let mut e_type = typed_e.types.singleton(e_span)?.clone();
-                e_type.clocks.push(ClockType {
-                    positive: false,
-                    clock: clock.clone(),
-                });
+                let mut types = typed_e.types.clone();
+                for e_type in types.iter_mut() {
+                    e_type.clocks.push(ClockType {
+                        positive: false,
+                        clock: clock.clone(),
+                    })
+                }
                 Self {
-                    types: types![e_type],
+                    types,
                     kind: ExprKind::WhenNot(Box::new(typed_e), clock),
                 }
             }

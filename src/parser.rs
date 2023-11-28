@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use proc_macro2::Span;
 use smallvec::SmallVec;
 use std::fmt::Display;
@@ -46,7 +47,25 @@ pub struct Type {
     pub clocks: Vec<ClockType>,
 }
 
-pub type Types = SmallVec<[Type; 4]>;
+pub type Types = SmallVec<[Type; 1]>;
+
+pub struct TypesFormat<'a>(&'a Types);
+
+impl<'a> Display for TypesFormat<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.iter().format(" * ").fmt(f)
+    }
+}
+
+pub trait TypesFmt {
+    fn type_format(&self) -> TypesFormat<'_>;
+}
+
+impl TypesFmt for Types {
+    fn type_format(&self) -> TypesFormat<'_> {
+        TypesFormat(self)
+    }
+}
 
 impl From<BaseType> for Type {
     fn from(base: BaseType) -> Self {
