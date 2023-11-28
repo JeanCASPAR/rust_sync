@@ -272,6 +272,7 @@ impl Expr {
                     kind: ExprKind::BinOp(Box::new(typed_left), op, Box::new(typed_right)),
                 }
             }
+            PExpr::BoolBinOp(_, _, _, _) | PExpr::CompOp(_, _, _, _) => todo!(),
             PExpr::If(cond, then_branch, else_branch) => {
                 let then_branch_span = then_branch.span;
                 let typed_then =

@@ -226,14 +226,20 @@ pub enum MathBinOp {
     Mul,
     Div,
     Rem,
+}
+
+pub enum BoolBinOp {
+    And,
+    Or,
+}
+
+pub enum CompOp {
     Ge,
     Gt,
     Le,
     Lt,
     Eq,
     NEq,
-    And,
-    Or,
 }
 
 /// Expression grammar :
@@ -309,6 +315,8 @@ pub enum Expr {
     Minus(Span, Box<Spanned<Expr>>),
     Not(Span, Box<Spanned<Expr>>),
     MathBinOp(Box<Spanned<Expr>>, MathBinOp, Span, Box<Spanned<Expr>>),
+    BoolBinOp(Box<Spanned<Expr>>, BoolBinOp, Span, Box<Spanned<Expr>>),
+    CompOp(Box<Spanned<Expr>>, CompOp, Span, Box<Spanned<Expr>>),
     If(Box<Spanned<Expr>>, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Int(i64, Span),
     Float(f64, Span),
@@ -702,19 +710,19 @@ mod expr_internals {
     impl Into<Spanned<Expr>> for Expr6 {
         fn into(self) -> Spanned<Expr> {
             let (e0, op, opspan, e1) = match self {
-                Self::Ge(e0, opspan, e1) => (e0, MathBinOp::Ge, opspan, e1),
-                Self::Gt(e0, opspan, e1) => (e0, MathBinOp::Gt, opspan, e1),
-                Self::Le(e0, opspan, e1) => (e0, MathBinOp::Le, opspan, e1),
-                Self::Lt(e0, opspan, e1) => (e0, MathBinOp::Lt, opspan, e1),
-                Self::Eq(e0, opspan, e1) => (e0, MathBinOp::Eq, opspan, e1),
-                Self::NEq(e0, opspan, e1) => (e0, MathBinOp::NEq, opspan, e1),
+                Self::Ge(e0, opspan, e1) => (e0, CompOp::Ge, opspan, e1),
+                Self::Gt(e0, opspan, e1) => (e0, CompOp::Gt, opspan, e1),
+                Self::Le(e0, opspan, e1) => (e0, CompOp::Le, opspan, e1),
+                Self::Lt(e0, opspan, e1) => (e0, CompOp::Lt, opspan, e1),
+                Self::Eq(e0, opspan, e1) => (e0, CompOp::Eq, opspan, e1),
+                Self::NEq(e0, opspan, e1) => (e0, CompOp::NEq, opspan, e1),
                 Self::Down(e) => return (*e).into(),
             };
             let e0: Spanned<Expr> = (*e0).into();
             let e1: Spanned<Expr> = (*e1).into();
             let span = e0.span().join(e1.span()).unwrap();
             Spanned {
-                inner: Expr::MathBinOp(Box::new(e0), op, opspan, Box::new(e1)),
+                inner: Expr::CompOp(Box::new(e0), op, opspan, Box::new(e1)),
                 span,
             }
         }
@@ -795,7 +803,7 @@ mod expr_internals {
                     let e1: Spanned<Expr> = (*e1).into();
                     let span = e.span().join(e1.span()).unwrap();
                     e2.into_with_ctx(Spanned {
-                        inner: Expr::MathBinOp(Box::new(e), MathBinOp::And, opspan, Box::new(e1)),
+                        inner: Expr::BoolBinOp(Box::new(e), BoolBinOp::And, opspan, Box::new(e1)),
                         span,
                     })
                 }
@@ -846,7 +854,7 @@ mod expr_internals {
                     let e1: Spanned<Expr> = (*e1).into();
                     let span = e.span().join(e1.span()).unwrap();
                     e2.into_with_ctx(Spanned {
-                        inner: Expr::MathBinOp(Box::new(e), MathBinOp::Or, opspan, Box::new(e1)),
+                        inner: Expr::BoolBinOp(Box::new(e), BoolBinOp::Or, opspan, Box::new(e1)),
                         span,
                     })
                 }
