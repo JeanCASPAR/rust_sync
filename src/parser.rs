@@ -7,8 +7,9 @@ use syn::{
     braced, parenthesized,
     parse::{Parse, ParseStream},
     punctuated::{Pair, Punctuated},
+    spanned::Spanned as SynSpanned,
     token::Paren,
-    Ident, LitBool, LitFloat, LitInt, Token,
+    Attribute, Ident, LitBool, LitFloat, LitInt, Meta, Token, Visibility,
 };
 
 use crate::error::Error;
@@ -1036,6 +1037,8 @@ impl Parse for Body {
 }
 
 pub struct Node {
+    pub vis: Visibility,
+    pub attrs: Vec<Attribute>,
     pub name: Ident,
     pub params: NodeParams,
     pub ret: NodeReturn,
@@ -1076,13 +1079,44 @@ impl Node {
 
 impl Parse for Node {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let _ = input.parse::<kw::node>()?;
+        let mut attrs = input.call(Attribute::parse_outer)?;
+        let mut export = None;
+        for (i, attr) in attrs.iter().enumerate() {
+            let Meta::Path(meta) = &attr.meta else {
+                continue;
+            };
+            let Some(id) = meta.get_ident() else {
+                continue;
+            };
+            if id.to_string() == "export" {
+                match export {
+                    None => export = Some((i, attr.span())),
+                    Some((_, span)) => {
+                        return Err(input.error(format!(
+                            "Multiple #[export] attribute found at {:?} and {:?}",
+                            span,
+                            attr.span()
+                        )))
+                    }
+                }
+            }
+        }
+
+        let export = export.map(|(i, _)| attrs.remove(i));
+
+        let span = input.parse::<kw::node>()?.span;
+        let vis = export
+            .and(Some(Visibility::Public(Token![pub](span))))
+            .unwrap_or(Visibility::Inherited);
+
         let name = input.parse::<Ident>()?;
         let params = input.parse::<NodeParams>()?;
         let _ = input.parse::<Token![=]>()?;
         let ret = input.parse::<NodeReturn>()?;
         let body = input.parse::<Body>()?;
         Ok(Node {
+            vis,
+            attrs,
             name,
             params,
             ret,
@@ -1091,18 +1125,39 @@ impl Parse for Node {
     }
 }
 
-pub struct Nodes(pub Vec<Node>);
+pub struct Module {
+    // TODO: remove when dev is finished
+    pub pass: u32,
+    pub nodes: Vec<Node>,
+}
 
-impl Parse for Nodes {
+impl Parse for Module {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        Ok(Nodes(
-            input
-                .parse_terminated(Node::parse, Token![;])?
-                .into_pairs()
-                .map(|pair| match pair {
-                    Pair::Punctuated(t, _) | Pair::End(t) => t,
-                })
-                .collect(),
-        ))
+        // TODO: remove when dev is finished
+        let mut attrs = input.call(Attribute::parse_inner)?;
+        if attrs.len() > 1 {
+            panic!("Max une seule passe")
+        }
+
+        let pass = if let Some(attr) = attrs.pop() {
+            let Meta::List(meta) = attr.meta else {
+                panic!("Tu sais pas écrire")
+            };
+            let id = meta.path.require_ident()?;
+            assert_eq!(id.to_string(), "pass");
+            syn::parse2::<LitInt>(meta.tokens)?.base10_parse()?
+        } else {
+            u32::MAX
+        };
+
+        let nodes = input
+            .parse_terminated(Node::parse, Token![;])?
+            .into_pairs()
+            .map(|pair| match pair {
+                Pair::Punctuated(t, _) | Pair::End(t) => t,
+            })
+            .collect();
+
+        Ok(Module { pass, nodes })
     }
 }

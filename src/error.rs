@@ -120,7 +120,11 @@ impl Error {
                 )
             }
             ErrorKind::FloatCast { ty } => {
-                abort!(self.span, "type mismatch: `{}` is not castable to float", ty)
+                abort!(
+                    self.span,
+                    "type mismatch: `{}` is not castable to float",
+                    ty
+                )
             }
             ErrorKind::TypeMismatch {
                 left_type,
