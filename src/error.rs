@@ -75,7 +75,7 @@ impl Error {
         Self::new(ErrorKind::FloatCast { ty }, span)
     }
 
-    pub(crate) fn no_tuples(span: Span, types: Types) -> Error {
+    pub fn no_tuples(span: Span, types: Types) -> Self {
         Self::new(ErrorKind::NoTuples { types }, span)
     }
 
