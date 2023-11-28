@@ -429,13 +429,10 @@ impl Expr {
                     .into_iter()
                     .map(|arg| Self::do_stuff(arg, context, node_types, first_index, None))
                     .collect::<Result<_, _>>()?;
-                let ty = if let Some(node_type) = node_types.get(&f_symb) {
-                    match &node_type.ret_types[..] {
-                        [ty] => types![ty.clone()],
-                        _ => todo!("Destructuring tuples is not implemented yet..."),
-                    }
+                let (ty, extern_symbol) = if let Some(node_type) = node_types.get(&f_symb) {
+                    (node_type.ret_types.clone(), false)
                 } else if let Some(ty) = toplevel_type {
-                    ty
+                    (ty, true)
                 } else {
                     // Raise error
                     return Err(Error::external_symbol_not_toplevel(f.span(), f.to_string()));
@@ -446,6 +443,7 @@ impl Expr {
                     kind: ExprKind::FunCall {
                         function: f,
                         arguments: typed_args,
+                        extern_symbol,
                     },
                 }
             }
@@ -470,6 +468,7 @@ pub enum ExprKind {
     WhenNot(Box<Expr>, Ident),
     Merge(Ident, Box<Expr>, Box<Expr>),
     FunCall {
+        extern_symbol: bool,
         function: Ident,
         arguments: Vec<Expr>,
     },
