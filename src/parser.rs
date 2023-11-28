@@ -114,6 +114,24 @@ impl Display for ClockType {
     }
 }
 
+impl ClockType {
+    pub fn format_as_expr(&self) -> ClockTypeAsExpression<'_> {
+        ClockTypeAsExpression(self)
+    }
+}
+
+pub struct ClockTypeAsExpression<'a>(&'a ClockType);
+
+impl<'a> Display for ClockTypeAsExpression<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "when")?;
+        if !self.0.positive {
+            write!(f, "not")?;
+        }
+        write!(f, " {}", self.0.clock)
+    }
+}
+
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.base)?;

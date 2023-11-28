@@ -2,7 +2,7 @@ use itertools::Itertools;
 use proc_macro2::{Ident, Span};
 use proc_macro_error::abort;
 
-use crate::parser::{Type, Types};
+use crate::parser::{ClockType, Type, Types};
 
 pub struct Error {
     kind: Box<ErrorKind>,
@@ -79,6 +79,22 @@ impl Error {
         Self::new(ErrorKind::NoTuples { types }, span)
     }
 
+    pub fn merge_branch_on_base_clock(
+        span: Span,
+        true_branch: bool,
+        clock_base_type: Vec<ClockType>,
+        clock: Ident,
+    ) -> Self {
+        Self::new(
+            ErrorKind::MergeBranchOnBaseClock {
+                true_branch,
+                expected_base_type: clock_base_type,
+                clock,
+            },
+            span,
+        )
+    }
+
     pub fn raise(self) -> ! {
         match *self.kind {
             ErrorKind::TwiceVar { name, def_span } => {
@@ -151,20 +167,56 @@ impl Error {
                 "tuples don't exist: ({}) is not a valid type...",
                 types.iter().format(", "),
             ),
+            ErrorKind::MergeBranchOnBaseClock {
+                true_branch,
+                expected_base_type,
+                clock,
+            } => abort!(
+                self.span,
+                "clock error: the expression of the {} branch in a merge has the base clock",
+                true_branch;
+                // note = "Rustre has not clock subtyping.";
+                help = "Try adding `{} when{} {}`.",
+                expected_base_type.iter().map(ClockType::format_as_expr).format(" "),
+                if true_branch { "" } else { "not" },
+                clock
+            ),
         }
     }
 }
 
 pub enum ErrorKind {
-    UndefinedVariable { variable: String },
-    TwiceVar { name: String, def_span: Span },
+    UndefinedVariable {
+        variable: String,
+    },
+    TwiceVar {
+        name: String,
+        def_span: Span,
+    },
     NegativeFirstIndex,
     BoolArithmetic,
     NumberLogic,
-    FloatCast { ty: Type },
-    ThenTypeMismatch { left_type: Type, right_type: Type },
-    TypeMismatch { left_type: Type, right_type: Type },
+    FloatCast {
+        ty: Type,
+    },
+    ThenTypeMismatch {
+        left_type: Type,
+        right_type: Type,
+    },
+    TypeMismatch {
+        left_type: Type,
+        right_type: Type,
+    },
     NonBoolCond,
-    ExternalSymbolNotToplevel { symbol: String },
-    NoTuples { types: Types },
+    ExternalSymbolNotToplevel {
+        symbol: String,
+    },
+    NoTuples {
+        types: Types,
+    },
+    MergeBranchOnBaseClock {
+        true_branch: bool,
+        expected_base_type: Vec<ClockType>,
+        clock: Ident,
+    },
 }

@@ -6,8 +6,8 @@ use syn::Ident;
 use crate::{
     error::Error,
     parser::{
-        BaseType, ClockType, Decl as PDecl, DeclVar, Expr as PExpr, MathBinOp, Module, Node as PNode,
-        NodeParams, NodeType, Spanned, Type, Types,
+        BaseType, ClockType, Decl as PDecl, DeclVar, Expr as PExpr, MathBinOp, Module,
+        Node as PNode, NodeParams, NodeType, Spanned, Type, Types,
     },
 };
 
@@ -388,14 +388,26 @@ impl Expr {
                     ));
                 }
 
-                let [true_start @ .., true_last] = &e_true_type.clocks[..] else {
-                    todo!("raise error: the true branch has base clock, it is not a slow process");
-                };
-                let [false_start @ .., false_last] = &e_false_type.clocks[..] else {
-                    todo!("raise error: the false branch has base clock, it is not a slow process");
-                };
                 let Some((clock_type, _clock_type_span)) = context.get(&clock_id) else {
                     todo!("raise error: variable not defined");
+                };
+
+                let [true_start @ .., true_last] = &e_true_type.clocks[..] else {
+                    return Err(Error::merge_branch_on_base_clock(
+                        e_true_span,
+                        true,
+                        clock_type.clocks.clone(),
+                        clock,
+                    ));
+                };
+
+                let [false_start @ .., false_last] = &e_false_type.clocks[..] else {
+                    return Err(Error::merge_branch_on_base_clock(
+                        e_false_span,
+                        false,
+                        clock_type.clocks.clone(),
+                        clock,
+                    ));
                 };
 
                 if true_start != clock_type.clocks {
