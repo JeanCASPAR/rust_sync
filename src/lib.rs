@@ -5,6 +5,7 @@ extern crate proc_macro;
 
 mod error;
 mod parser;
+mod scheduler;
 mod typing;
 
 #[proc_macro_error]

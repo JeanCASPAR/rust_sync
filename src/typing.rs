@@ -91,9 +91,9 @@ impl Node {
 }
 
 pub struct Decl {
-    id: Ident,
-    ty: Type,
-    expr: Expr,
+    pub id: Ident,
+    pub ty: Type,
+    pub expr: Expr,
 }
 
 impl Decl {
@@ -115,8 +115,8 @@ impl Decl {
 }
 
 pub struct Expr {
-    ty: Type,
-    kind: ExprKind,
+    pub ty: Type,
+    pub kind: ExprKind,
 }
 
 impl Expr {
