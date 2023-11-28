@@ -1,0 +1,5 @@
+error: type mismatch: left has type `int`, right has type `bool`
+ --> tests/typing/fail/type-mismatch-05.rs:6:19
+  |
+6 |         a : int = 3 + false;
+  |                   ^^^^^^^^^

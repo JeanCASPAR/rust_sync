@@ -1,0 +1,5 @@
+error: type mismatch: expected `bool`, found `int`
+ --> tests/typing/fail/number-logic-01.rs:6:20
+  |
+6 |         a : bool = !3;
+  |                    ^^
