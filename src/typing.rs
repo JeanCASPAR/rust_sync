@@ -386,7 +386,7 @@ impl Expr {
                 let e_true_type = typed_e_true.types.singleton(e_true_span)?;
                 let e_false_type = typed_e_false.types.singleton(e_false_span)?;
 
-                if e_true_type != e_false_type {
+                if e_true_type.base != e_false_type.base {
                     return Err(Error::type_mismatch(
                         span,
                         e_true_type.clone(),
@@ -395,7 +395,7 @@ impl Expr {
                 }
 
                 let Some((clock_type, _clock_type_span)) = context.get(&clock_id) else {
-                    todo!("raise error: variable not defined");
+                    return Err(Error::undef_var(&clock));
                 };
 
                 let [true_start @ .., true_last] = &e_true_type.clocks[..] else {
@@ -417,11 +417,23 @@ impl Expr {
                 };
 
                 if true_start != clock_type.clocks {
-                    todo!("raise error: not the same base clock for merge's clock and the true branch");
+                    return Err(Error::merge_branch_different_base(
+                        e_true_span,
+                        true,
+                        true_start.to_vec(),
+                        clock,
+                        clock_type.clocks.clone(),
+                    ));
                 }
 
                 if false_start != clock_type.clocks {
-                    todo!("raise error: not the same base clock for merge's clock and the false branch");
+                    return Err(Error::merge_branch_different_base(
+                        e_false_span,
+                        false,
+                        false_start.to_vec(),
+                        clock,
+                        clock_type.clocks.clone(),
+                    ));
                 }
 
                 if !true_last.positive {
@@ -430,6 +442,14 @@ impl Expr {
 
                 if false_last.positive {
                     todo!("raise error: the false branch should be on negative {clock_id}");
+                }
+
+                if true_last.clock.to_string() != clock_id {
+                    todo!("raise error: the true branch doesn't have the right clock");
+                }
+
+                if false_last.clock.to_string() != clock_id {
+                    todo!("raise error: the false branch doesn't have the right clock");
                 }
 
                 let merge_type = Type {

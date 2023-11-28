@@ -1,3 +1,5 @@
+use std::iter::once;
+
 use itertools::Itertools;
 use proc_macro2::{Ident, Span};
 use proc_macro_error::abort;
@@ -101,6 +103,24 @@ impl Error {
         )
     }
 
+    pub fn merge_branch_different_base(
+        span: Span,
+        true_branch: bool,
+        branch_clock: Vec<ClockType>,
+        clock: Ident,
+        clock_clock: Vec<ClockType>,
+    ) -> Self {
+        Self::new(
+            ErrorKind::MergeBranchDifferentBase {
+                true_branch,
+                clock_clock,
+                clock,
+                branch_clock,
+            },
+            span,
+        )
+    }
+
     pub fn raise(self) -> ! {
         match *self.kind {
             ErrorKind::TwiceVar { name, def_span } => {
@@ -181,6 +201,25 @@ impl Error {
                 if true_branch { "" } else { "not" },
                 clock
             ),
+            ErrorKind::MergeBranchDifferentBase {
+                true_branch,
+                clock_clock,
+                clock,
+                branch_clock,
+            } => abort!(
+                self.span,
+                "clock error: the expression of the {} branch has an incompatible clock type",
+                true_branch;
+                note = "its clock type starts with `{}`",
+                once(String::from("base"))
+                    .chain(branch_clock.iter().map(ToString::to_string))
+                    .format(" on ");
+                note = clock.span() => "the clock type of {} is `{}`",
+                clock.to_string(),
+                once(String::from("base"))
+                    .chain(clock_clock.iter().map(ToString::to_string))
+                    .format(" on ");
+            ),
         }
     }
 }
@@ -219,5 +258,13 @@ pub enum ErrorKind {
         true_branch: bool,
         expected_base_type: Vec<ClockType>,
         clock: Ident,
+    },
+    MergeBranchDifferentBase {
+        true_branch: bool,
+        // The clock type of the clock, ie. if the clock is `c`, and has type `bool on c'`, then
+        // `clock_clock` is `vec![c']`, and `clock` is `c`
+        clock_clock: Vec<ClockType>,
+        clock: Ident,
+        branch_clock: Vec<ClockType>,
     },
 }
