@@ -49,6 +49,7 @@ pub struct Type {
 
 pub type Types = SmallVec<[Type; 1]>;
 
+#[derive(Debug)]
 pub struct TypesFormat<'a>(&'a Types);
 
 impl<'a> Display for TypesFormat<'a> {
@@ -82,6 +83,7 @@ impl Parse for Type {
     }
 }
 
+#[derive(Debug)]
 pub struct Spanned<T> {
     pub inner: T,
     pub span: Span,
@@ -139,6 +141,7 @@ impl ClockType {
     }
 }
 
+#[derive(Debug)]
 pub struct ClockTypeAsExpression<'a>(&'a ClockType);
 
 impl<'a> Display for ClockTypeAsExpression<'a> {
@@ -161,6 +164,7 @@ impl Display for Type {
     }
 }
 
+#[derive(Debug)]
 pub struct NodeParam {
     pub id: Ident,
     pub ty: Type,
@@ -178,6 +182,7 @@ impl Parse for NodeParam {
     }
 }
 
+#[derive(Debug)]
 pub struct NodeParams(pub Vec<NodeParam>);
 
 impl Parse for NodeParams {
@@ -196,6 +201,7 @@ impl Parse for NodeParams {
     }
 }
 
+#[derive(Debug)]
 pub struct NodeReturn(pub Vec<Ident>);
 
 impl Parse for NodeReturn {
@@ -213,6 +219,7 @@ impl Parse for NodeReturn {
     }
 }
 
+#[derive(Debug)]
 pub enum MathBinOp {
     Add,
     Sub,
@@ -294,6 +301,7 @@ pub enum MathBinOp {
 /// and it makes the grammar ambiguous
 
 /// spans correspond to operators and constants
+#[derive(Debug)]
 pub enum Expr {
     Var(Ident),
     Pre(Span, Box<Spanned<Expr>>),
@@ -319,6 +327,7 @@ mod expr_internals {
 
     use super::*;
 
+    #[derive(Debug)]
     pub(super) enum Expr0 {
         When(Box<Expr1>, Span, Ident),
         WhenNot(Box<Expr1>, Span, Ident),
@@ -366,6 +375,7 @@ mod expr_internals {
         }
     }
 
+    #[derive(Debug)]
     pub(super) enum Expr1 {
         Then(Box<Expr2>, Span, Box<Expr1>),
         Down(Box<Expr2>),
@@ -402,6 +412,7 @@ mod expr_internals {
         }
     }
 
+    #[derive(Debug)]
     pub(super) struct Expr2(Box<Expr3>, Box<Expr2bis>);
 
     impl Parse for Expr2 {
@@ -419,6 +430,7 @@ mod expr_internals {
         }
     }
 
+    #[derive(Debug)]
     pub(super) enum Expr2bis {
         Add(Span, Box<Expr3>, Box<Expr2bis>),
         Sub(Span, Box<Expr3>, Box<Expr2bis>),
@@ -471,6 +483,7 @@ mod expr_internals {
         }
     }
 
+    #[derive(Debug)]
     pub(super) struct Expr3(Box<Expr4>, Box<Expr3bis>);
 
     impl Parse for Expr3 {
@@ -488,6 +501,7 @@ mod expr_internals {
         }
     }
 
+    #[derive(Debug)]
     pub(super) enum Expr3bis {
         Mul(Span, Box<Expr4>, Box<Expr3bis>),
         Div(Span, Box<Expr4>, Box<Expr3bis>),
@@ -556,6 +570,7 @@ mod expr_internals {
         }
     }
 
+    #[derive(Debug)]
     pub(super) enum Expr4 {
         Minus(Span, Box<Expr5>),
         Pre(Span, Box<Expr5>),
@@ -604,6 +619,7 @@ mod expr_internals {
         }
     }
 
+    #[derive(Debug)]
     pub(super) enum Expr5 {
         FloatCast(Box<Expr6>, Span),
         Down(Box<Expr6>),
@@ -642,6 +658,7 @@ mod expr_internals {
         }
     }
 
+    #[derive(Debug)]
     pub(super) enum Expr6 {
         Ge(Box<Expr7>, Span, Box<Expr7>),
         Gt(Box<Expr7>, Span, Box<Expr7>),
@@ -703,6 +720,7 @@ mod expr_internals {
         }
     }
 
+    #[derive(Debug)]
     pub(super) enum Expr7 {
         Not(Span, Box<Expr8>),
         Down(Box<Expr8>),
@@ -735,6 +753,7 @@ mod expr_internals {
         }
     }
 
+    #[derive(Debug)]
     pub(super) struct Expr8(Box<Expr9>, Box<Expr8bis>);
 
     impl Parse for Expr8 {
@@ -750,6 +769,7 @@ mod expr_internals {
         }
     }
 
+    #[derive(Debug)]
     pub(super) enum Expr8bis {
         And(Span, Box<Expr9>, Box<Expr8bis>),
         Empty,
@@ -784,6 +804,7 @@ mod expr_internals {
         }
     }
 
+    #[derive(Debug)]
     pub(super) struct Expr9(Box<Expr10>, Box<Expr9bis>);
 
     impl Parse for Expr9 {
@@ -799,6 +820,7 @@ mod expr_internals {
         }
     }
 
+    #[derive(Debug)]
     pub(super) enum Expr9bis {
         Or(Span, Box<Expr10>, Box<Expr9bis>),
         Empty,
@@ -833,6 +855,7 @@ mod expr_internals {
         }
     }
 
+    #[derive(Debug)]
     pub(super) enum Expr10 {
         If(Span, Box<Expr0>, Box<Expr0>, Box<Expr0>, Span),
         Paren(Span, Box<Expr0>, Span),
@@ -1003,6 +1026,7 @@ impl Parse for Spanned<Expr> {
     }
 }
 
+#[derive(Debug)]
 pub struct DeclVar {
     pub id: Ident,
     pub ty: Type,
@@ -1017,6 +1041,7 @@ impl Parse for DeclVar {
     }
 }
 
+#[derive(Debug)]
 pub struct Decl {
     pub vars: Vec<DeclVar>,
     pub expr: Spanned<Expr>,
@@ -1051,6 +1076,7 @@ impl Parse for Decl {
     }
 }
 
+#[derive(Debug)]
 pub struct Body(pub Vec<Decl>);
 
 impl Parse for Body {
@@ -1073,6 +1099,7 @@ impl Parse for Body {
     }
 }
 
+#[derive(Debug)]
 pub struct Node {
     pub vis: Visibility,
     pub attrs: Vec<Attribute>,
@@ -1082,6 +1109,7 @@ pub struct Node {
     pub body: Body,
 }
 
+#[derive(Debug)]
 pub struct NodeType {
     pub arg_types: Types,
     pub ret_types: Types,
@@ -1165,6 +1193,7 @@ impl Parse for Node {
     }
 }
 
+#[derive(Debug)]
 pub struct Module {
     // TODO: remove when dev is finished
     pub pass: u32,

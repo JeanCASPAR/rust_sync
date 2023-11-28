@@ -11,6 +11,7 @@ use crate::{
     },
 };
 
+#[derive(Debug)]
 pub struct Ast {
     nodes: Vec<Node>,
 }
@@ -34,6 +35,7 @@ impl TryFrom<Module> for Ast {
     }
 }
 
+#[derive(Debug)]
 pub struct Node {
     pub name: Ident,
     pub params: NodeParams,
@@ -114,6 +116,7 @@ impl Singleton for Types {
     }
 }
 
+#[derive(Debug)]
 pub struct Decl {
     vars: Vec<DeclVar>,
     expr: Spanned<Expr>,
@@ -155,6 +158,7 @@ impl Decl {
     }
 }
 
+#[derive(Debug)]
 pub struct Expr {
     types: Types,
     kind: ExprKind,
@@ -464,6 +468,7 @@ impl Expr {
     }
 }
 
+#[derive(Debug)]
 pub enum ExprKind {
     Var(Ident),
     Unit,

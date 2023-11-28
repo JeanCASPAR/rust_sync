@@ -5,6 +5,7 @@ use smallvec::smallvec as types;
 
 use crate::parser::{ClockType, Type, Types, TypesFmt};
 
+#[derive(Debug)]
 pub struct Error {
     kind: Box<ErrorKind>,
     span: Span,
@@ -184,6 +185,7 @@ impl Error {
     }
 }
 
+#[derive(Debug)]
 pub enum ErrorKind {
     UndefinedVariable {
         variable: String,
