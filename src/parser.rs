@@ -23,6 +23,8 @@ mod kw {
     custom_keyword!(merge);
     custom_keyword!(when);
     custom_keyword!(whennot);
+    custom_keyword!(on);
+    custom_keyword!(onnot);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +33,12 @@ pub enum BaseType {
     Int64,
     Float64,
     Bool,
+}
+
+impl Parse for BaseType {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(input.parse::<Spanned<BaseType>>()?.inner())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,18 +107,55 @@ impl<T> Spanned<T> {
     }
 }
 
-impl Parse for Spanned<Type> {
+impl Parse for Spanned<BaseType> {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let ty_name = input.parse::<Ident>()?;
-        let base_type = match &ty_name.to_string() as &str {
+        let inner = match &ty_name.to_string() as &str {
             "int" => BaseType::Int64,
             "float" => BaseType::Float64,
             "bool" => BaseType::Bool,
             s => return Err(input.error(format!("Expected type int, float or bool, got {}", s))),
         };
         Ok(Spanned {
-            inner: base_type.into(),
+            inner,
             span: ty_name.span(),
+        })
+    }
+}
+
+impl Parse for Spanned<Type> {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let base_type = input.parse::<Spanned<BaseType>>()?;
+        let mut span = base_type.span();
+        let base = base_type.inner();
+
+        let mut clocks = Vec::new();
+
+        loop {
+            if input.peek(kw::on) {
+                let _ = input.parse::<kw::on>()?;
+                let clock = input.parse::<Ident>()?;
+                span = span.join(clock.span()).unwrap();
+                clocks.push(ClockType {
+                    positive: true,
+                    clock,
+                });
+            } else if input.peek(kw::onnot) {
+                let _ = input.parse::<kw::onnot>()?;
+                let clock = input.parse::<Ident>()?;
+                span = span.join(clock.span()).unwrap();
+                clocks.push(ClockType {
+                    positive: false,
+                    clock,
+                });
+            } else {
+                break;
+            }
+        }
+
+        Ok(Spanned {
+            inner: Type { base, clocks },
+            span,
         })
     }
 }
@@ -228,11 +273,13 @@ pub enum MathBinOp {
     Rem,
 }
 
+#[derive(Debug)]
 pub enum BoolBinOp {
     And,
     Or,
 }
 
+#[derive(Debug)]
 pub enum CompOp {
     Ge,
     Gt,
@@ -425,40 +472,30 @@ mod expr_internals {
 
     impl Parse for Expr2 {
         fn parse(input: ParseStream) -> syn::Result<Self> {
-            let e1 = input.parse::<Expr3>()?;
-            let e2 = input.parse::<Expr2bis>()?;
-            Ok(Expr2(Box::new(e1), Box::new(e2)))
+            Ok(Self(Box::new(input.parse()?), Box::new(input.parse()?)))
         }
     }
 
     impl Into<Spanned<Expr>> for Expr2 {
         fn into(self) -> Spanned<Expr> {
-            let e = (*self.0).into();
-            self.1.into_with_ctx(e)
+            let e0 = (*self.0).into();
+            self.1.into_with_ctx(e0)
         }
     }
 
     #[derive(Debug)]
     pub(super) enum Expr2bis {
-        Add(Span, Box<Expr3>, Box<Expr2bis>),
-        Sub(Span, Box<Expr3>, Box<Expr2bis>),
+        Or(Span, Box<Expr10>, Box<Expr2bis>),
         Empty,
     }
 
     impl Parse for Expr2bis {
         fn parse(input: ParseStream) -> syn::Result<Self> {
-            if input.peek(Token![+]) {
-                let opspan = input.span();
-                let _ = input.parse::<Token![+]>()?;
-                let e1 = input.parse::<Expr3>()?;
-                let e2 = input.parse::<Expr2bis>()?;
-                Ok(Expr2bis::Add(opspan, Box::new(e1), Box::new(e2)))
-            } else if input.peek(Token![-]) && !input.peek2(Token![>]) {
-                let opspan = input.span();
-                let _ = input.parse::<Token![-]>()?;
-                let e1 = input.parse::<Expr3>()?;
-                let e2 = input.parse::<Expr2bis>()?;
-                Ok(Expr2bis::Sub(opspan, Box::new(e1), Box::new(e2)))
+            if input.peek(Token![||]) {
+                let span = input.parse::<Token![||]>()?.span();
+                let e0 = input.parse::<Expr10>()?;
+                let e1 = input.parse::<Expr2bis>()?;
+                Ok(Expr2bis::Or(span, Box::new(e0), Box::new(e1)))
             } else {
                 Ok(Expr2bis::Empty)
             }
@@ -466,6 +503,213 @@ mod expr_internals {
     }
 
     impl Expr2bis {
+        fn into_with_ctx(self, e: Spanned<Expr>) -> Spanned<Expr> {
+            match self {
+                Self::Or(opspan, e1, e2) => {
+                    let e1: Spanned<Expr> = (*e1).into();
+                    let span = e.span().join(e1.span()).unwrap();
+                    e2.into_with_ctx(Spanned {
+                        inner: Expr::BoolBinOp(Box::new(e), BoolBinOp::Or, opspan, Box::new(e1)),
+                        span,
+                    })
+                }
+                Self::Empty => e,
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub(super) struct Expr3(Box<Expr4>, Box<Expr3bis>);
+
+    impl Parse for Expr3 {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            Ok(Self(Box::new(input.parse()?), Box::new(input.parse()?)))
+        }
+    }
+
+    impl Into<Spanned<Expr>> for Expr3 {
+        fn into(self) -> Spanned<Expr> {
+            let e0: Spanned<Expr> = (*self.0).into();
+            self.1.into_with_ctx(e0)
+        }
+    }
+
+    #[derive(Debug)]
+    pub(super) enum Expr3bis {
+        And(Span, Box<Expr4>, Box<Expr3bis>),
+        Empty,
+    }
+
+    impl Parse for Expr3bis {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            if input.peek(Token![&&]) {
+                let opspan = input.parse::<Token![&&]>()?.span();
+                let e0 = input.parse::<Expr4>()?;
+                let e1 = input.parse::<Self>()?;
+                Ok(Self::And(opspan, Box::new(e0), Box::new(e1)))
+            } else {
+                Ok(Self::Empty)
+            }
+        }
+    }
+
+    impl Expr3bis {
+        fn into_with_ctx(self, e: Spanned<Expr>) -> Spanned<Expr> {
+            match self {
+                Self::And(opspan, e1, e2) => {
+                    let e1: Spanned<Expr> = (*e1).into();
+                    let span = e.span().join(e1.span()).unwrap();
+                    e2.into_with_ctx(Spanned {
+                        inner: Expr::BoolBinOp(Box::new(e), BoolBinOp::And, opspan, Box::new(e1)),
+                        span,
+                    })
+                }
+                Self::Empty => e,
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub(super) enum Expr4 {
+        Not(Span, Box<Expr5>),
+        Down(Box<Expr5>),
+    }
+
+    impl Parse for Expr4 {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            if input.peek(Token![!]) {
+                let span = input.parse::<Token![!]>()?.span();
+                Ok(Expr4::Not(span, Box::new(input.parse()?)))
+            } else {
+                Ok(Expr4::Down(Box::new(input.parse()?)))
+            }
+        }
+    }
+
+    impl Into<Spanned<Expr>> for Expr4 {
+        fn into(self) -> Spanned<Expr> {
+            match self {
+                Self::Not(opspan, e) => {
+                    let e: Spanned<Expr> = (*e).into();
+                    let span = opspan.join(e.span()).unwrap();
+                    Spanned {
+                        inner: Expr::Not(opspan, Box::new(e)),
+                        span,
+                    }
+                }
+                Self::Down(e) => (*e).into(),
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub(super) enum Expr5 {
+        Ge(Box<Expr6>, Span, Box<Expr6>),
+        Gt(Box<Expr6>, Span, Box<Expr6>),
+        Le(Box<Expr6>, Span, Box<Expr6>),
+        Lt(Box<Expr6>, Span, Box<Expr6>),
+        Eq(Box<Expr6>, Span, Box<Expr6>),
+        NEq(Box<Expr6>, Span, Box<Expr6>),
+        Down(Box<Expr6>),
+    }
+
+    impl Parse for Expr5 {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            let e0 = input.parse::<Expr6>()?;
+            let lookahead = input.lookahead1();
+            let (op, opspan): (fn(_, _, _) -> _, _) = if lookahead.peek(Token![>=]) {
+                let span = input.parse::<Token![>=]>()?.span();
+                (Self::Ge, span)
+            } else if lookahead.peek(Token![>]) {
+                let span = input.parse::<Token![>]>()?.span();
+                (Self::Gt, span)
+            } else if lookahead.peek(Token![<=]) {
+                let span = input.parse::<Token![<=]>()?.span();
+                (Self::Le, span)
+            } else if lookahead.peek(Token![<]) {
+                let span = input.parse::<Token![<]>()?.span();
+                (Self::Lt, span)
+            } else if lookahead.peek(Token![==]) {
+                let span = input.parse::<Token![==]>()?.span();
+                (Self::Eq, span)
+            } else if lookahead.peek(Token![!=]) {
+                let span = input.parse::<Token![!=]>()?.span();
+                (Self::NEq, span)
+            } else {
+                return Ok(Self::Down(Box::new(e0)));
+            };
+            let e1 = input.parse::<Expr6>()?;
+            Ok(op(Box::new(e0), opspan, Box::new(e1)))
+        }
+    }
+
+    impl Into<Spanned<Expr>> for Expr5 {
+        fn into(self) -> Spanned<Expr> {
+            let (e0, op, opspan, e1) = match self {
+                Self::Ge(e0, opspan, e1) => (e0, CompOp::Ge, opspan, e1),
+                Self::Gt(e0, opspan, e1) => (e0, CompOp::Gt, opspan, e1),
+                Self::Le(e0, opspan, e1) => (e0, CompOp::Le, opspan, e1),
+                Self::Lt(e0, opspan, e1) => (e0, CompOp::Lt, opspan, e1),
+                Self::Eq(e0, opspan, e1) => (e0, CompOp::Eq, opspan, e1),
+                Self::NEq(e0, opspan, e1) => (e0, CompOp::NEq, opspan, e1),
+                Self::Down(e) => return (*e).into(),
+            };
+            let e0: Spanned<Expr> = (*e0).into();
+            let e1: Spanned<Expr> = (*e1).into();
+            let span = e0.span().join(e1.span()).unwrap();
+            Spanned {
+                inner: Expr::CompOp(Box::new(e0), op, opspan, Box::new(e1)),
+                span,
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub(super) struct Expr6(Box<Expr7>, Box<Expr6bis>);
+
+    impl Parse for Expr6 {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            let e1 = input.parse::<Expr7>()?;
+            let e2 = input.parse::<Expr6bis>()?;
+            Ok(Self(Box::new(e1), Box::new(e2)))
+        }
+    }
+
+    impl Into<Spanned<Expr>> for Expr6 {
+        fn into(self) -> Spanned<Expr> {
+            let e = (*self.0).into();
+            self.1.into_with_ctx(e)
+        }
+    }
+
+    #[derive(Debug)]
+    pub(super) enum Expr6bis {
+        Add(Span, Box<Expr7>, Box<Expr6bis>),
+        Sub(Span, Box<Expr7>, Box<Expr6bis>),
+        Empty,
+    }
+
+    impl Parse for Expr6bis {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            if input.peek(Token![+]) {
+                let opspan = input.span();
+                let _ = input.parse::<Token![+]>()?;
+                let e1 = input.parse::<Expr7>()?;
+                let e2 = input.parse::<Self>()?;
+                Ok(Self::Add(opspan, Box::new(e1), Box::new(e2)))
+            } else if input.peek(Token![-]) && !input.peek2(Token![>]) {
+                let opspan = input.span();
+                let _ = input.parse::<Token![-]>()?;
+                let e1 = input.parse::<Expr7>()?;
+                let e2 = input.parse::<Self>()?;
+                Ok(Self::Sub(opspan, Box::new(e1), Box::new(e2)))
+            } else {
+                Ok(Self::Empty)
+            }
+        }
+    }
+
+    impl Expr6bis {
         fn into_with_ctx(self, e: Spanned<Expr>) -> Spanned<Expr> {
             match self {
                 Self::Add(sp, e1, e2) => {
@@ -492,17 +736,17 @@ mod expr_internals {
     }
 
     #[derive(Debug)]
-    pub(super) struct Expr3(Box<Expr4>, Box<Expr3bis>);
+    pub(super) struct Expr7(Box<Expr8>, Box<Expr7bis>);
 
-    impl Parse for Expr3 {
+    impl Parse for Expr7 {
         fn parse(input: ParseStream) -> syn::Result<Self> {
-            let e1 = input.parse::<Expr4>()?;
-            let e2 = input.parse::<Expr3bis>()?;
-            Ok(Expr3(Box::new(e1), Box::new(e2)))
+            let e1 = input.parse::<Expr8>()?;
+            let e2 = input.parse::<Expr7bis>()?;
+            Ok(Self(Box::new(e1), Box::new(e2)))
         }
     }
 
-    impl Into<Spanned<Expr>> for Expr3 {
+    impl Into<Spanned<Expr>> for Expr7 {
         fn into(self) -> Spanned<Expr> {
             let e = (*self.0).into();
             self.1.into_with_ctx(e)
@@ -510,40 +754,40 @@ mod expr_internals {
     }
 
     #[derive(Debug)]
-    pub(super) enum Expr3bis {
-        Mul(Span, Box<Expr4>, Box<Expr3bis>),
-        Div(Span, Box<Expr4>, Box<Expr3bis>),
-        Rem(Span, Box<Expr4>, Box<Expr3bis>),
+    pub(super) enum Expr7bis {
+        Mul(Span, Box<Expr8>, Box<Expr7bis>),
+        Div(Span, Box<Expr8>, Box<Expr7bis>),
+        Rem(Span, Box<Expr8>, Box<Expr7bis>),
         Empty,
     }
 
-    impl Parse for Expr3bis {
+    impl Parse for Expr7bis {
         fn parse(input: ParseStream) -> syn::Result<Self> {
             if input.peek(Token![*]) {
                 let opspan = input.span();
                 let _ = input.parse::<Token![*]>()?;
-                let e1 = input.parse::<Expr4>()?;
-                let e2 = input.parse::<Expr3bis>()?;
-                Ok(Expr3bis::Mul(opspan, Box::new(e1), Box::new(e2)))
+                let e1 = input.parse::<Expr8>()?;
+                let e2 = input.parse::<Self>()?;
+                Ok(Self::Mul(opspan, Box::new(e1), Box::new(e2)))
             } else if input.peek(Token![/]) {
                 let opspan = input.span();
                 let _ = input.parse::<Token![/]>()?;
-                let e1 = input.parse::<Expr4>()?;
-                let e2 = input.parse::<Expr3bis>()?;
-                Ok(Expr3bis::Div(opspan, Box::new(e1), Box::new(e2)))
+                let e1 = input.parse::<Expr8>()?;
+                let e2 = input.parse::<Self>()?;
+                Ok(Self::Div(opspan, Box::new(e1), Box::new(e2)))
             } else if input.peek(Token![%]) {
                 let opspan = input.span();
                 let _ = input.parse::<Token![%]>()?;
-                let e1 = input.parse::<Expr4>()?;
-                let e2 = input.parse::<Expr3bis>()?;
-                Ok(Expr3bis::Rem(opspan, Box::new(e1), Box::new(e2)))
+                let e1 = input.parse::<Expr8>()?;
+                let e2 = input.parse::<Self>()?;
+                Ok(Self::Rem(opspan, Box::new(e1), Box::new(e2)))
             } else {
-                Ok(Expr3bis::Empty)
+                Ok(Self::Empty)
             }
         }
     }
 
-    impl Expr3bis {
+    impl Expr7bis {
         fn into_with_ctx(self, e: Spanned<Expr>) -> Spanned<Expr> {
             match self {
                 Self::Mul(sp, e1, e2) => {
@@ -579,31 +823,31 @@ mod expr_internals {
     }
 
     #[derive(Debug)]
-    pub(super) enum Expr4 {
-        Minus(Span, Box<Expr5>),
-        Pre(Span, Box<Expr5>),
-        Down(Box<Expr5>),
+    pub(super) enum Expr8 {
+        Minus(Span, Box<Expr9>),
+        Pre(Span, Box<Expr9>),
+        Down(Box<Expr9>),
     }
 
-    impl Parse for Expr4 {
+    impl Parse for Expr8 {
         fn parse(input: ParseStream) -> syn::Result<Self> {
             if input.peek(Token![-]) && !input.peek2(Token![>]) {
                 let opspan = input.span();
                 let _ = input.parse::<Token![-]>()?;
-                let e = input.parse::<Expr5>()?;
-                Ok(Expr4::Minus(opspan, Box::new(e)))
+                let e = input.parse::<Expr9>()?;
+                Ok(Self::Minus(opspan, Box::new(e)))
             } else if input.peek(kw::pre) {
-                let opspan = input.parse::<kw::pre>()?.span;
-                let e = input.parse::<Expr5>()?;
-                Ok(Expr4::Pre(opspan, Box::new(e)))
+                let opspan = input.parse::<kw::pre>()?.span();
+                let e = input.parse::<Expr9>()?;
+                Ok(Self::Pre(opspan, Box::new(e)))
             } else {
-                let e = input.parse::<Expr5>()?;
-                Ok(Expr4::Down(Box::new(e)))
+                let e = input.parse::<Expr9>()?;
+                Ok(Self::Down(Box::new(e)))
             }
         }
     }
 
-    impl Into<Spanned<Expr>> for Expr4 {
+    impl Into<Spanned<Expr>> for Expr8 {
         fn into(self) -> Spanned<Expr> {
             match self {
                 Self::Minus(opspan, e) => {
@@ -628,29 +872,29 @@ mod expr_internals {
     }
 
     #[derive(Debug)]
-    pub(super) enum Expr5 {
-        FloatCast(Box<Expr6>, Span),
-        Down(Box<Expr6>),
+    pub(super) enum Expr9 {
+        FloatCast(Box<Expr10>, Span),
+        Down(Box<Expr10>),
     }
 
-    impl Parse for Expr5 {
+    impl Parse for Expr9 {
         fn parse(input: ParseStream) -> syn::Result<Self> {
-            let e = input.parse::<Expr6>()?;
+            let e = input.parse::<Expr10>()?;
             if input.peek(Token![as]) {
                 let _ = input.parse::<Token![as]>()?;
-                let ty = input.parse::<Spanned<Type>>()?;
+                let ty = input.parse::<Spanned<BaseType>>()?;
                 let span = ty.span();
-                match ty.inner().base {
-                    BaseType::Float64 => Ok(Expr5::FloatCast(Box::new(e), span)),
+                match ty.inner() {
+                    BaseType::Float64 => Ok(Self::FloatCast(Box::new(e), span)),
                     _ => Err(input.error("You can only cast to float")),
                 }
             } else {
-                Ok(Expr5::Down(Box::new(e)))
+                Ok(Self::Down(Box::new(e)))
             }
         }
     }
 
-    impl Into<Spanned<Expr>> for Expr5 {
+    impl Into<Spanned<Expr>> for Expr9 {
         fn into(self) -> Spanned<Expr> {
             match self {
                 Self::FloatCast(e, sp) => {
@@ -662,203 +906,6 @@ mod expr_internals {
                     }
                 }
                 Self::Down(e) => (*e).into(),
-            }
-        }
-    }
-
-    #[derive(Debug)]
-    pub(super) enum Expr6 {
-        Ge(Box<Expr7>, Span, Box<Expr7>),
-        Gt(Box<Expr7>, Span, Box<Expr7>),
-        Le(Box<Expr7>, Span, Box<Expr7>),
-        Lt(Box<Expr7>, Span, Box<Expr7>),
-        Eq(Box<Expr7>, Span, Box<Expr7>),
-        NEq(Box<Expr7>, Span, Box<Expr7>),
-        Down(Box<Expr7>),
-    }
-
-    impl Parse for Expr6 {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            let e0 = input.parse::<Expr7>()?;
-            let lookahead = input.lookahead1();
-            let (op, opspan): (fn(_, _, _) -> _, _) = if lookahead.peek(Token![>=]) {
-                let span = input.parse::<Token![>=]>()?.span();
-                (Expr6::Ge, span)
-            } else if lookahead.peek(Token![>]) {
-                let span = input.parse::<Token![>]>()?.span();
-                (Expr6::Gt, span)
-            } else if lookahead.peek(Token![<=]) {
-                let span = input.parse::<Token![<=]>()?.span();
-                (Expr6::Le, span)
-            } else if lookahead.peek(Token![<]) {
-                let span = input.parse::<Token![<]>()?.span();
-                (Expr6::Lt, span)
-            } else if lookahead.peek(Token![==]) {
-                let span = input.parse::<Token![==]>()?.span();
-                (Expr6::Eq, span)
-            } else if lookahead.peek(Token![!=]) {
-                let span = input.parse::<Token![!=]>()?.span();
-                (Expr6::NEq, span)
-            } else {
-                return Ok(Expr6::Down(Box::new(e0)));
-            };
-            let e1 = input.parse::<Expr7>()?;
-            Ok(op(Box::new(e0), opspan, Box::new(e1)))
-        }
-    }
-
-    impl Into<Spanned<Expr>> for Expr6 {
-        fn into(self) -> Spanned<Expr> {
-            let (e0, op, opspan, e1) = match self {
-                Self::Ge(e0, opspan, e1) => (e0, CompOp::Ge, opspan, e1),
-                Self::Gt(e0, opspan, e1) => (e0, CompOp::Gt, opspan, e1),
-                Self::Le(e0, opspan, e1) => (e0, CompOp::Le, opspan, e1),
-                Self::Lt(e0, opspan, e1) => (e0, CompOp::Lt, opspan, e1),
-                Self::Eq(e0, opspan, e1) => (e0, CompOp::Eq, opspan, e1),
-                Self::NEq(e0, opspan, e1) => (e0, CompOp::NEq, opspan, e1),
-                Self::Down(e) => return (*e).into(),
-            };
-            let e0: Spanned<Expr> = (*e0).into();
-            let e1: Spanned<Expr> = (*e1).into();
-            let span = e0.span().join(e1.span()).unwrap();
-            Spanned {
-                inner: Expr::CompOp(Box::new(e0), op, opspan, Box::new(e1)),
-                span,
-            }
-        }
-    }
-
-    #[derive(Debug)]
-    pub(super) enum Expr7 {
-        Not(Span, Box<Expr8>),
-        Down(Box<Expr8>),
-    }
-
-    impl Parse for Expr7 {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            if input.peek(Token![!]) {
-                let span = input.parse::<Token![!]>()?.span();
-                Ok(Expr7::Not(span, Box::new(input.parse()?)))
-            } else {
-                Ok(Expr7::Down(Box::new(input.parse()?)))
-            }
-        }
-    }
-
-    impl Into<Spanned<Expr>> for Expr7 {
-        fn into(self) -> Spanned<Expr> {
-            match self {
-                Self::Not(opspan, e) => {
-                    let e: Spanned<Expr> = (*e).into();
-                    let span = opspan.join(e.span()).unwrap();
-                    Spanned {
-                        inner: Expr::Not(opspan, Box::new(e)),
-                        span,
-                    }
-                }
-                Self::Down(e) => (*e).into(),
-            }
-        }
-    }
-
-    #[derive(Debug)]
-    pub(super) struct Expr8(Box<Expr9>, Box<Expr8bis>);
-
-    impl Parse for Expr8 {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            Ok(Expr8(Box::new(input.parse()?), Box::new(input.parse()?)))
-        }
-    }
-
-    impl Into<Spanned<Expr>> for Expr8 {
-        fn into(self) -> Spanned<Expr> {
-            let e0: Spanned<Expr> = (*self.0).into();
-            self.1.into_with_ctx(e0)
-        }
-    }
-
-    #[derive(Debug)]
-    pub(super) enum Expr8bis {
-        And(Span, Box<Expr9>, Box<Expr8bis>),
-        Empty,
-    }
-
-    impl Parse for Expr8bis {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            if input.peek(Token![&&]) {
-                let opspan = input.parse::<Token![&&]>()?.span();
-                let e0 = input.parse::<Expr9>()?;
-                let e1 = input.parse::<Expr8bis>()?;
-                Ok(Expr8bis::And(opspan, Box::new(e0), Box::new(e1)))
-            } else {
-                Ok(Expr8bis::Empty)
-            }
-        }
-    }
-
-    impl Expr8bis {
-        fn into_with_ctx(self, e: Spanned<Expr>) -> Spanned<Expr> {
-            match self {
-                Self::And(opspan, e1, e2) => {
-                    let e1: Spanned<Expr> = (*e1).into();
-                    let span = e.span().join(e1.span()).unwrap();
-                    e2.into_with_ctx(Spanned {
-                        inner: Expr::BoolBinOp(Box::new(e), BoolBinOp::And, opspan, Box::new(e1)),
-                        span,
-                    })
-                }
-                Self::Empty => e,
-            }
-        }
-    }
-
-    #[derive(Debug)]
-    pub(super) struct Expr9(Box<Expr10>, Box<Expr9bis>);
-
-    impl Parse for Expr9 {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            Ok(Expr9(Box::new(input.parse()?), Box::new(input.parse()?)))
-        }
-    }
-
-    impl Into<Spanned<Expr>> for Expr9 {
-        fn into(self) -> Spanned<Expr> {
-            let e0 = (*self.0).into();
-            self.1.into_with_ctx(e0)
-        }
-    }
-
-    #[derive(Debug)]
-    pub(super) enum Expr9bis {
-        Or(Span, Box<Expr10>, Box<Expr9bis>),
-        Empty,
-    }
-
-    impl Parse for Expr9bis {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            if input.peek(Token![||]) {
-                let span = input.parse::<Token![||]>()?.span();
-                let e0 = input.parse::<Expr10>()?;
-                let e1 = input.parse::<Expr9bis>()?;
-                Ok(Expr9bis::Or(span, Box::new(e0), Box::new(e1)))
-            } else {
-                Ok(Expr9bis::Empty)
-            }
-        }
-    }
-
-    impl Expr9bis {
-        fn into_with_ctx(self, e: Spanned<Expr>) -> Spanned<Expr> {
-            match self {
-                Self::Or(opspan, e1, e2) => {
-                    let e1: Spanned<Expr> = (*e1).into();
-                    let span = e.span().join(e1.span()).unwrap();
-                    e2.into_with_ctx(Spanned {
-                        inner: Expr::BoolBinOp(Box::new(e), BoolBinOp::Or, opspan, Box::new(e1)),
-                        span,
-                    })
-                }
-                Self::Empty => e,
             }
         }
     }
@@ -1180,7 +1227,7 @@ impl Parse for Node {
 
         let export = export.map(|(i, _)| attrs.remove(i));
 
-        let span = input.parse::<kw::node>()?.span;
+        let span = input.parse::<kw::node>()?.span();
         let vis = export
             .and(Some(Visibility::Public(Token![pub](span))))
             .unwrap_or(Visibility::Inherited);

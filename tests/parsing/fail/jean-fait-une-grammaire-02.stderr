@@ -1,5 +1,0 @@
-error: expected `;`
- --> tests/parsing/fail/jean-fait-une-grammaire-02.rs:8:25
-  |
-8 |         x : bool = !pre x;
-  |                         ^
