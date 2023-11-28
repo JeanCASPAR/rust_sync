@@ -1,0 +1,5 @@
+error: this expression will cause an access to an undefined value
+ --> tests/typing/fail/pre-04.rs:7:20
+  |
+7 |         y : bool = pre !x;
+  |                    ^^^^^^

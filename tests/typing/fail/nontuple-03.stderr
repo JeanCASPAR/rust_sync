@@ -1,0 +1,5 @@
+error: tuples don't exist: int * int is not a valid type...
+ --> tests/typing/fail/nontuple-03.rs:8:30
+  |
+8 |         (a : int, b : int) = non(2, 1) as float;
+  |                              ^^^^^^^^^^^^^^^^^^

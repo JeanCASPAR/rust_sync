@@ -1,0 +1,5 @@
+error: type mismatch: expected `bool`, found `int`
+ --> tests/typing/fail/type-mismatch-03.rs:6:28
+  |
+6 |         a : int = false -> !(pre a);
+  |                            ^^^^^^^^
