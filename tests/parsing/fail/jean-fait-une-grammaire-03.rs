@@ -5,7 +5,7 @@ sync! {
     
     node oui() = ()
     where
-        x : bool = !pre x;
+        x : bool = 3 >= -2;
 }
 
 fn main() {}
