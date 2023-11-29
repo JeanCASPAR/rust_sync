@@ -1,11 +1,10 @@
 use patricia_tree::StringPatriciaMap;
 use proc_macro2::Span;
-use smallvec::SmallVec;
 use syn::Ident;
 
 use crate::{
     error::Error,
-    parser::{MathBinOp, Type, Types},
+    parser::{MathBinOp, Types},
     typing::{Expr as TExpr, ExprKind as TExprKind, Node as TNode},
 };
 
@@ -18,8 +17,9 @@ pub struct Ast {
 pub struct Node {
     pub name: Ident,
     pub params: Types,
-    pub ret: Vec<(SIdent, Type)>,
-    pub equations: Vec<(Types, EqKind)>,
+    pub ret_vars: Vec<SIdent>,
+    pub ret_type: Types,
+    pub equations: Vec<Equation>,
     pub deps: Vec<Vec<usize>>,
     pub order: Vec<usize>,
 }
@@ -65,13 +65,19 @@ pub enum ExprKind {
     Tuple(Vec<SIdent>),
 }
 
-struct Equation {
-    types: Types,
-    kind: EqKind,
+pub struct Equation {
+    pub types: Types,
+    pub kind: EqKind,
+}
+
+impl Equation {
+    pub fn new(types: Types, kind: EqKind) -> Self {
+        Self { types, kind }
+    }
 }
 
 struct Context {
-    equations: Vec<(Types, EqKind)>,
+    equations: Vec<(Equation, Option<Span>)>,
     /// n € deps[m] if the equation m depends on the equation n
     deps: Vec<Vec<usize>>,
     /// we replace all idents by a pair whose first element is the number
@@ -94,10 +100,11 @@ impl Context {
     }
 
     fn schedule_eq(&mut self, node: TNode) -> Result<(), Error> {
-        self.equations.push((SmallVec::new(), EqKind::Input));
+        self.equations
+            .push((Equation::new(Types::new(), EqKind::Input), None));
         self.deps.push(Vec::new());
         for (i, param) in node.params.0.iter().enumerate() {
-            self.equations[0].0.push(param.ty.clone());
+            self.equations[0].0.types.push(param.ty.clone());
             self.store.insert(param.id.to_string(), (0, i));
         }
 
@@ -105,8 +112,10 @@ impl Context {
             let i = self.deps.len();
             self.deps.push(Vec::new());
             // dummy EqKind::Input here because we cannot yet translate the expression
-            self.equations
-                .push((decl.expr.inner.types.clone(), EqKind::Input));
+            self.equations.push((
+                Equation::new(decl.expr.inner.types.clone(), EqKind::Input),
+                Some(decl.expr.span),
+            ));
 
             for (j, var) in decl.vars.iter().enumerate() {
                 self.store.insert(var.id.to_string(), (i, j));
@@ -116,7 +125,7 @@ impl Context {
         for (i, decl) in node.body.into_iter().enumerate() {
             let i = i + 1;
             let e = self.normalize_expr(decl.expr.inner, i, true);
-            self.equations[i].1 = EqKind::Expr(e);
+            self.equations[i].0.kind = EqKind::Expr(e);
         }
 
         self.topo_sort()?;
@@ -148,11 +157,12 @@ impl Context {
                 self.store.insert(s.clone(), (i, 0));
                 self.deps.push(Vec::new());
 
-                self.equations.push((ty.clone(), EqKind::Input));
+                self.equations
+                    .push((Equation::new(ty.clone(), EqKind::Input), Some(e.span)));
                 let cell = self.cells;
                 self.cells += 1;
                 let e = self.normalize_expr(*e, i, true);
-                self.equations[i].1 = EqKind::CellExpr(e, cell);
+                self.equations[i].0.kind = EqKind::CellExpr(e, cell);
 
                 ExprKind::Pre(cell)
             }
@@ -240,7 +250,8 @@ impl Context {
 
                     self.deps.push(Vec::new());
                     // dumme EqKind::Input
-                    self.equations.push((ty.clone(), EqKind::Input));
+                    self.equations
+                        .push((Equation::new(ty.clone(), EqKind::Input), None));
 
                     let mut args = Vec::with_capacity(arguments.len());
                     for expr in arguments {
@@ -248,7 +259,7 @@ impl Context {
                         args.push(e);
                     }
 
-                    self.equations[i].1 = EqKind::NodeCall {
+                    self.equations[i].0.kind = EqKind::NodeCall {
                         ident: function,
                         args,
                         cell,
@@ -274,8 +285,7 @@ impl Context {
 
     fn visit(&mut self, idx: usize, visited: &mut [u8]) -> Result<(), Error> {
         if visited[idx] == 1 {
-            // TODO: real span
-            return Err(Error::cyclic_equation(Span::call_site()));
+            return Err(Error::cyclic_equation(self.equations[idx].1.unwrap()));
         } else if visited[idx] == 2 {
             return Ok(());
         }
@@ -301,20 +311,22 @@ impl TryFrom<TNode> for Node {
         let mut context = Context::new();
         context.schedule_eq(node)?;
 
-        let params = context.equations[0].0.clone();
+        let params = context.equations[0].0.types.clone();
 
-        let ret = ret
+        let (ret_vars, ret_type) = ret
             .into_iter()
             .map(|(id, ty)| (context.store.get(&id.to_string()).unwrap().clone(), ty))
-            .collect();
+            .unzip();
 
         let order = context.order;
+        let equations = context.equations.into_iter().map(|eq| eq.0).collect();
 
         Ok(Node {
             name,
             params,
-            ret,
-            equations: context.equations,
+            ret_vars,
+            ret_type,
+            equations,
             deps: context.deps,
             order,
         })

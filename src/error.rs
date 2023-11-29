@@ -227,7 +227,9 @@ impl Error {
                     .chain(clock_clock.iter().map(ToString::to_string))
                     .format(" on ");
             ),
-            ErrorKind::CyclicEquation => todo!("there is a cycle"),
+            ErrorKind::CyclicEquation => {
+                abort!(self.span, "scheduling error: expression depends on itself")
+            }
         }
     }
 }

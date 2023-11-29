@@ -162,6 +162,7 @@ impl Decl {
 pub struct Expr {
     pub types: Types,
     pub kind: ExprKind,
+    pub span: Span,
 }
 
 impl Expr {
@@ -193,11 +194,13 @@ impl Expr {
                 Self {
                     types: types![ty],
                     kind: ExprKind::Var(var),
+                    span,
                 }
             }
             PExpr::Unit => Self {
                 types: types![BaseType::Unit.into()],
                 kind: ExprKind::Unit,
+                span,
             },
             PExpr::Pre(_, e) => {
                 if first_index == 0 {
@@ -207,6 +210,7 @@ impl Expr {
                 Self {
                     types: typed_e.types.clone(),
                     kind: ExprKind::Pre(Box::new(typed_e)),
+                    span,
                 }
             }
             PExpr::Then(head, _, tail) => {
@@ -223,6 +227,7 @@ impl Expr {
                 Self {
                     types: head_expr.types.clone(),
                     kind: ExprKind::Then(Box::new(head_expr), Box::new(tail_expr)),
+                    span,
                 }
             }
             PExpr::Minus(_, e) => {
@@ -235,6 +240,7 @@ impl Expr {
                 Self {
                     types: typed_e.types.clone(),
                     kind: ExprKind::Minus(Box::new(typed_e)),
+                    span,
                 }
             }
             PExpr::Not(_, e) => {
@@ -247,6 +253,7 @@ impl Expr {
                 Self {
                     types: typed_e.types.clone(),
                     kind: ExprKind::Not(Box::new(typed_e)),
+                    span,
                 }
             }
             PExpr::MathBinOp(left, op, _, right) => {
@@ -270,6 +277,7 @@ impl Expr {
                 Self {
                     types: typed_left.types.clone(),
                     kind: ExprKind::BinOp(Box::new(typed_left), op, Box::new(typed_right)),
+                    span,
                 }
             }
             PExpr::BoolBinOp(_, _, _, _) | PExpr::CompOp(_, _, _, _) => todo!(),
@@ -303,19 +311,23 @@ impl Expr {
                         Box::new(typed_then),
                         Box::new(typed_else),
                     ),
+                    span,
                 }
             }
             PExpr::Int(i, _) => Self {
                 types: types![BaseType::Int64.into()],
                 kind: ExprKind::Int(i),
+                span,
             },
             PExpr::Float(f, _) => Self {
                 types: types![BaseType::Float64.into()],
                 kind: ExprKind::Float(f),
+                span,
             },
             PExpr::Bool(b, _) => Self {
                 types: types![BaseType::Bool.into()],
                 kind: ExprKind::Bool(b),
+                span,
             },
             PExpr::FloatCast(casted) => {
                 let typed_casted = Self::do_stuff(*casted, context, node_types, first_index, None)?;
@@ -332,6 +344,7 @@ impl Expr {
                         clocks: clocks.clone(),
                     }],
                     kind: ExprKind::FloatCast(Box::new(typed_casted)),
+                    span,
                 }
             }
             PExpr::When(e, _, clock) => {
@@ -353,6 +366,7 @@ impl Expr {
                 Self {
                     types,
                     kind: ExprKind::When(Box::new(typed_e), clock),
+                    span,
                 }
             }
             PExpr::WhenNot(e, _, clock) => {
@@ -374,6 +388,7 @@ impl Expr {
                 Self {
                     types,
                     kind: ExprKind::WhenNot(Box::new(typed_e), clock),
+                    span,
                 }
             }
             PExpr::Merge(clock, e_true, e_false) => {
@@ -459,6 +474,7 @@ impl Expr {
                 Self {
                     types: types![merge_type],
                     kind: ExprKind::Merge(clock, Box::new(typed_e_true), Box::new(typed_e_false)),
+                    span,
                 }
             }
             PExpr::FunCall(f, args) => {
@@ -483,6 +499,7 @@ impl Expr {
                         arguments: typed_args,
                         extern_symbol,
                     },
+                    span,
                 }
             }
         })
