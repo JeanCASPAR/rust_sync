@@ -13,7 +13,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct Ast {
-    nodes: Vec<Node>,
+    pub nodes: Vec<Node>,
 }
 
 type Map<T> = StringPatriciaMap<T>;

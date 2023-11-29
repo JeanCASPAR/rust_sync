@@ -1,11 +1,11 @@
 use rust_sync::sync;
 
 sync! {
-    #![pass(1)]
+    #![pass(2)]
 
     node oui() = ()
     where
-        a : float = 3.0 when c;
+        a : int = a;
 }
 
 fn main() {}

@@ -1,0 +1,5 @@
+error: scheduling error: expression depends on itself
+ --> tests/scheduling/fail/basic-1.rs:8:19
+  |
+8 |         a : int = a;
+  |                   ^

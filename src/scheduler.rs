@@ -5,15 +5,30 @@ use syn::Ident;
 use crate::{
     error::Error,
     parser::{MathBinOp, Types},
-    typing::{Expr as TExpr, ExprKind as TExprKind, Node as TNode},
+    typing::{Ast as TAst, Expr as TExpr, ExprKind as TExprKind, Node as TNode},
 };
 
 pub type SIdent = (usize, usize);
 
+#[derive(Debug)]
 pub struct Ast {
-    nodes: Vec<Node>,
+    pub nodes: Vec<Node>,
 }
 
+impl TryFrom<TAst> for Ast {
+    type Error = Error;
+    fn try_from(ast: TAst) -> Result<Self, Self::Error> {
+        Ok(Ast {
+            nodes: ast
+                .nodes
+                .into_iter()
+                .map(|node| node.try_into())
+                .collect::<Result<_, _>>()?,
+        })
+    }
+}
+
+#[derive(Debug)]
 pub struct Node {
     pub name: Ident,
     pub params: Types,
@@ -24,6 +39,7 @@ pub struct Node {
     pub order: Vec<usize>,
 }
 
+#[derive(Debug)]
 pub enum EqKind {
     Input,
     NodeCall {
@@ -36,11 +52,13 @@ pub enum EqKind {
     CellExpr(Expr, usize),
 }
 
+#[derive(Debug)]
 pub struct Expr {
-    ty: Types,
-    kind: ExprKind,
+    pub ty: Types,
+    pub kind: ExprKind,
 }
 
+#[derive(Debug)]
 pub enum ExprKind {
     Var(SIdent),
     Unit,
@@ -65,6 +83,7 @@ pub enum ExprKind {
     Tuple(Vec<SIdent>),
 }
 
+#[derive(Debug)]
 pub struct Equation {
     pub types: Types,
     pub kind: EqKind,
@@ -76,6 +95,7 @@ impl Equation {
     }
 }
 
+#[derive(Debug)]
 struct Context {
     equations: Vec<(Equation, Option<Span>)>,
     /// n € deps[m] if the equation m depends on the equation n
@@ -135,7 +155,7 @@ impl Context {
 
     fn normalize_expr(&mut self, e: TExpr, eq: usize, depends: bool) -> Expr {
         let mut add_dep = |i: usize| {
-            if depends && i != eq && !self.deps[eq].contains(&i) {
+            if depends && !self.deps[eq].contains(&i) {
                 self.deps[eq].push(i);
             }
         };
@@ -151,7 +171,7 @@ impl Context {
                 let s = format!("#{}", self.equations.len());
                 let i = self.equations.len();
                 let ty = ty.clone();
-                if ty.len() <= 1 {
+                if ty.len() > 1 {
                     todo!("pre with tuple unimplemented yet")
                 }
                 self.store.insert(s.clone(), (i, 0));
