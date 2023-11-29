@@ -19,15 +19,21 @@ pub struct Node {
     pub name: Ident,
     pub params: Types,
     pub ret: Vec<(SIdent, Type)>,
-    pub equations: Vec<(Types, EqType)>,
+    pub equations: Vec<(Types, EqKind)>,
     pub deps: Vec<Vec<usize>>,
     pub order: Vec<usize>,
 }
 
-pub enum EqType {
+pub enum EqKind {
     Input,
-    NodeCall,
+    NodeCall {
+        ident: Ident,
+        args: Vec<Expr>,
+        cell: usize,
+    },
     Expr(Expr),
+    /// expression that is saved in a memory cell
+    CellExpr(Expr, usize),
 }
 
 pub struct Expr {
@@ -38,7 +44,8 @@ pub struct Expr {
 pub enum ExprKind {
     Var(SIdent),
     Unit,
-    Pre(Box<Expr>),
+    // cell number
+    Pre(usize),
     Then(Box<Expr>, Box<Expr>),
     Minus(Box<Expr>),
     Not(Box<Expr>),
@@ -55,10 +62,16 @@ pub enum ExprKind {
         function: Ident,
         arguments: Vec<Expr>,
     },
+    Tuple(Vec<SIdent>),
+}
+
+struct Equation {
+    types: Types,
+    kind: EqKind,
 }
 
 struct Context {
-    equations: Vec<(Types, EqType)>,
+    equations: Vec<(Types, EqKind)>,
     /// n € deps[m] if the equation m depends on the equation n
     deps: Vec<Vec<usize>>,
     /// we replace all idents by a pair whose first element is the number
@@ -66,6 +79,7 @@ struct Context {
     /// second element is the number of the ident in the declaration
     store: StringPatriciaMap<SIdent>,
     order: Vec<usize>,
+    cells: usize,
 }
 
 impl Context {
@@ -75,11 +89,12 @@ impl Context {
             deps: Vec::new(),
             store: StringPatriciaMap::new(),
             order: Vec::new(),
+            cells: 0,
         }
     }
 
     fn schedule_eq(&mut self, node: TNode) -> Result<(), Error> {
-        self.equations.push((SmallVec::new(), EqType::Input));
+        self.equations.push((SmallVec::new(), EqKind::Input));
         self.deps.push(Vec::new());
         for (i, param) in node.params.0.iter().enumerate() {
             self.equations[0].0.push(param.ty.clone());
@@ -89,9 +104,9 @@ impl Context {
         for decl in node.body.iter() {
             let i = self.deps.len();
             self.deps.push(Vec::new());
-            // dummy EqType::Input here because we cannot yet translate the expression
+            // dummy EqKind::Input here because we cannot yet translate the expression
             self.equations
-                .push((decl.expr.inner.types.clone(), EqType::Input));
+                .push((decl.expr.inner.types.clone(), EqKind::Input));
 
             for (j, var) in decl.vars.iter().enumerate() {
                 self.store.insert(var.id.to_string(), (i, j));
@@ -100,12 +115,8 @@ impl Context {
 
         for (i, decl) in node.body.into_iter().enumerate() {
             let i = i + 1;
-            match decl.expr.inner.kind {
-                // TODO: separate node call from other expressions
-                _ => (),
-            };
             let e = self.normalize_expr(decl.expr.inner, i, true);
-            self.equations[i].1 = EqType::Expr(e);
+            self.equations[i].1 = EqKind::Expr(e);
         }
 
         self.topo_sort()?;
@@ -131,20 +142,25 @@ impl Context {
                 let s = format!("#{}", self.equations.len());
                 let i = self.equations.len();
                 let ty = ty.clone();
+                if ty.len() <= 1 {
+                    todo!("pre with tuple unimplemented yet")
+                }
                 self.store.insert(s.clone(), (i, 0));
                 self.deps.push(Vec::new());
 
-                self.equations.push((ty.clone(), EqType::Input));
+                self.equations.push((ty.clone(), EqKind::Input));
+                let cell = self.cells;
+                self.cells += 1;
                 let e = self.normalize_expr(*e, i, true);
-                self.equations[i].1 = EqType::Expr(e);
+                self.equations[i].1 = EqKind::CellExpr(e, cell);
 
-                //TODO: cell for pre
-                ExprKind::Pre(Box::new(Expr {
-                    ty,
-                    kind: ExprKind::Var((i, 0)),
-                }))
+                ExprKind::Pre(cell)
             }
-            TExprKind::Then(_, _) => todo!(),
+            TExprKind::Then(e1, e2) => {
+                let e1 = self.normalize_expr(*e1, eq, depends);
+                let e2 = self.normalize_expr(*e2, eq, depends);
+                ExprKind::Then(Box::new(e1), Box::new(e2))
+            }
             TExprKind::Minus(e) => {
                 let e = self.normalize_expr(*e, eq, depends);
                 ExprKind::Minus(Box::new(e))
@@ -200,7 +216,47 @@ impl Context {
                 extern_symbol,
                 function,
                 arguments,
-            } => todo!(),
+            } => {
+                if extern_symbol {
+                    let mut args = Vec::with_capacity(arguments.len());
+                    for arg in arguments {
+                        args.push(self.normalize_expr(arg, eq, depends));
+                    }
+                    ExprKind::FunCall {
+                        function,
+                        arguments: args,
+                    }
+                } else {
+                    let s = format!("#{}", self.equations.len());
+                    let i = self.equations.len();
+                    let ty = ty.clone();
+                    for j in 0..ty.len() {
+                        self.store.insert(s.clone(), (i, j));
+                    }
+                    add_dep(i);
+
+                    let cell = self.cells;
+                    self.cells += 1;
+
+                    self.deps.push(Vec::new());
+                    // dumme EqKind::Input
+                    self.equations.push((ty.clone(), EqKind::Input));
+
+                    let mut args = Vec::with_capacity(arguments.len());
+                    for expr in arguments {
+                        let e = self.normalize_expr(expr, eq, depends);
+                        args.push(e);
+                    }
+
+                    self.equations[i].1 = EqKind::NodeCall {
+                        ident: function,
+                        args,
+                        cell,
+                    };
+
+                    ExprKind::Tuple((0..ty.len()).into_iter().map(|j| (i, j)).collect())
+                }
+            }
         };
         Expr { ty, kind }
     }
