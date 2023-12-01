@@ -1,5 +1,5 @@
 error: expected `;`
- --> tests/typing/fail/pre-03.rs:6:37
+ --> tests/typing/fail/pre-03.rs:8:37
   |
-6 |         a : int = 0 -> 1 -> pre pre pre 0;
+8 |         a : int = 0 -> 1 -> pre pre pre 0;
   |                                     ^^^

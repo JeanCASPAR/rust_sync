@@ -1,11 +1,11 @@
 error: variable `hello` is defined twice
- --> tests/typing/fail/redef-02.rs:7:9
+ --> tests/typing/fail/redef-02.rs:9:9
   |
-7 |         hello : int = hello;
+9 |         hello : int = hello;
   |         ^^^^^
   |
 help: the variable was previously defined here
- --> tests/typing/fail/redef-02.rs:6:9
+ --> tests/typing/fail/redef-02.rs:8:9
   |
-6 |         hello : int = hello,
+8 |         hello : int = hello,
   |         ^^^^^

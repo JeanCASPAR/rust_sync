@@ -121,10 +121,10 @@ impl Error {
         )
     }
 
-    pub fn cyclic_equation(span: Span) -> Self {
+    pub fn cyclic_equation(span: Span, cycle: Vec<Span>) -> Self {
         Self {
             span,
-            kind: Box::new(ErrorKind::CyclicEquation),
+            kind: Box::new(ErrorKind::CyclicEquation { cycle }),
         }
     }
 
@@ -227,8 +227,12 @@ impl Error {
                     .chain(clock_clock.iter().map(ToString::to_string))
                     .format(" on ");
             ),
-            ErrorKind::CyclicEquation => {
-                abort!(self.span, "scheduling error: expression depends on itself")
+            ErrorKind::CyclicEquation { cycle } => {
+                abort!(
+                    self.span,
+                    "scheduling error: the following expressions form a cycle : {}",
+                    cycle.iter().filter_map(Span::source_text).join(", ")
+                )
             }
         }
     }
@@ -258,7 +262,9 @@ pub enum ErrorKind {
         right_types: Types,
     },
     NonBoolCond,
-    CyclicEquation,
+    CyclicEquation {
+        cycle: Vec<Span>,
+    },
     ExternalSymbolNotToplevel {
         symbol: String,
     },

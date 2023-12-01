@@ -1,5 +1,5 @@
 error: type mismatch: expected `int`, found `bool`
- --> tests/typing/fail/bool-arith-01.rs:6:19
+ --> tests/typing/fail/bool-arith-01.rs:8:19
   |
-6 |         a : int = -false;
+8 |         a : int = -false;
   |                   ^^^^^^

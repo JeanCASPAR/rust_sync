@@ -294,28 +294,57 @@ impl Context {
 
     fn topo_sort(&mut self) -> Result<(), Error> {
         // 0 = not visited, 1 = visiting, 2 = visited
-        let mut visited = vec![0u8; self.deps.len()];
+        // Option<usize> : idx of the parent in the DFS
+        let mut visited = vec![(0u8, None); self.deps.len()];
 
         for i in 0..self.deps.len() {
-            self.visit(i, &mut visited)?;
+            self.visit(i, None, &mut visited)?;
         }
 
         Ok(())
     }
 
-    fn visit(&mut self, idx: usize, visited: &mut [u8]) -> Result<(), Error> {
-        if visited[idx] == 1 {
-            return Err(Error::cyclic_equation(self.equations[idx].1.unwrap()));
-        } else if visited[idx] == 2 {
+    fn visit(
+        &mut self,
+        idx: usize,
+        parent: Option<usize>,
+        visited: &mut [(u8, Option<usize>)],
+    ) -> Result<(), Error> {
+        static mut A: usize = 0;
+        unsafe { A += 1 };
+        if visited[idx].0 == 1 {
+            let mut cycle = vec![self.equations[idx].1.unwrap()];
+            let mut current = parent.unwrap();
+            loop {
+                cycle.push(self.equations[current].1.unwrap());
+                current = match visited[current].1 {
+                    Some(curr) => curr,
+                    None => {
+                        // the first and last equations are the same but no other equations
+                        // depends on this one
+                        cycle.pop();
+                        break;
+                    }
+                };
+
+                if current == idx {
+                    break;
+                }
+            }
+            return Err(Error::cyclic_equation(
+                self.equations[idx].1.unwrap(),
+                cycle,
+            ));
+        } else if visited[idx].0 == 2 {
             return Ok(());
         }
         self.order.push(idx);
 
-        visited[idx] = 1;
+        visited[idx] = (1, parent);
         for j in 0..self.deps[idx].len() {
-            self.visit(self.deps[idx][j], visited)?;
+            self.visit(self.deps[idx][j], Some(idx), visited)?;
         }
-        visited[idx] = 2;
+        visited[idx].0 = 2;
 
         Ok(())
     }
