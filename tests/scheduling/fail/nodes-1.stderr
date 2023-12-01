@@ -1,0 +1,5 @@
+error: scheduling error: the following nodes form a cycle : oui
+ --> tests/scheduling/fail/nodes-1.rs:6:10
+  |
+6 |     node oui() = ()
+  |          ^^^

@@ -128,6 +128,13 @@ impl Error {
         }
     }
 
+    pub fn cyclic_node(span: Span, cycle: Vec<Ident>) -> Self {
+        Self {
+            span,
+            kind: Box::new(ErrorKind::CyclicNode { cycle }),
+        }
+    }
+
     pub fn raise(self) -> ! {
         match *self.kind {
             ErrorKind::TwiceVar { name, def_span } => {
@@ -234,6 +241,13 @@ impl Error {
                     cycle.iter().filter_map(Span::source_text).join(", ")
                 )
             }
+            ErrorKind::CyclicNode { cycle } => {
+                abort!(
+                    self.span,
+                    "scheduling error: the following nodes form a cycle : {}",
+                    cycle.iter().join(", ")
+                )
+            }
         }
     }
 }
@@ -262,9 +276,6 @@ pub enum ErrorKind {
         right_types: Types,
     },
     NonBoolCond,
-    CyclicEquation {
-        cycle: Vec<Span>,
-    },
     ExternalSymbolNotToplevel {
         symbol: String,
     },
@@ -283,5 +294,11 @@ pub enum ErrorKind {
         clock_clock: Vec<ClockType>,
         clock: Ident,
         branch_clock: Vec<ClockType>,
+    },
+    CyclicEquation {
+        cycle: Vec<Span>,
+    },
+    CyclicNode {
+        cycle: Vec<Ident>,
     },
 }

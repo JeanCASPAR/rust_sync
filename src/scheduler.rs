@@ -15,16 +15,87 @@ pub struct Ast {
     pub nodes: Vec<Node>,
 }
 
+impl Ast {
+    /// boolean : true if currently being visited
+    fn visit(
+        s: String,
+        parent: Option<String>,
+        dfs: &mut StringPatriciaMap<(bool, Option<String>)>,
+        node_deps: &StringPatriciaMap<Vec<Ident>>,
+        node_idents: &StringPatriciaMap<Ident>,
+    ) -> Result<(), Error> {
+        match dfs.get(&s) {
+            Some((true, _)) => {
+                let mut cycle = vec![s.clone()];
+                let mut current = parent.clone().unwrap();
+                loop {
+                    cycle.push(current.clone());
+                    current = match dfs.get(&current).unwrap().clone().1 {
+                        Some(id) => id.to_string(),
+                        None => {
+                            cycle.pop();
+                            break;
+                        }
+                    };
+                    if &current == &s {
+                        break;
+                    }
+                }
+
+                let cycle = cycle
+                    .into_iter()
+                    .map(|s| node_idents.get(s).unwrap())
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+                return Err(Error::cyclic_node(cycle.last().unwrap().span(), cycle));
+            }
+            Some((false, _)) => return Ok(()),
+            None => {
+                dfs.insert(s.clone(), (true, parent));
+                for n in node_deps.get(&s).unwrap() {
+                    Self::visit(n.to_string(), Some(s.clone()), dfs, node_deps, node_idents)?;
+                }
+                dfs.get_mut(&s).unwrap().0 = false;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn assert_no_node_cycle(
+        node_deps: StringPatriciaMap<Vec<Ident>>,
+        node_idents: StringPatriciaMap<Ident>,
+    ) -> Result<(), Error> {
+        let mut dfs = StringPatriciaMap::new();
+
+        for s in node_deps.keys() {
+            Self::visit(s, None, &mut dfs, &node_deps, &node_idents)?;
+        }
+
+        Ok(())
+    }
+}
+
 impl TryFrom<TAst> for Ast {
     type Error = Error;
     fn try_from(ast: TAst) -> Result<Self, Self::Error> {
-        Ok(Ast {
-            nodes: ast
-                .nodes
-                .into_iter()
-                .map(|node| node.try_into())
-                .collect::<Result<_, _>>()?,
-        })
+        let mut node_deps = StringPatriciaMap::new();
+
+        let nodes = ast
+            .nodes
+            .into_iter()
+            .map(|node| Node::schedule(node, &mut node_deps))
+            .collect::<Result<Vec<Node>, _>>()?;
+
+        let mut node_idents = StringPatriciaMap::new();
+        for node in nodes.iter() {
+            node_idents.insert(node.name.to_string(), node.name.clone());
+        }
+
+        Self::assert_no_node_cycle(node_deps, node_idents)?;
+
+        Ok(Ast { nodes })
     }
 }
 
@@ -62,7 +133,7 @@ pub struct Expr {
 pub enum ExprKind {
     Var(SIdent),
     Unit,
-    // cell number
+    /// cell number
     Pre(usize),
     Then(Box<Expr>, Box<Expr>),
     Minus(Box<Expr>),
@@ -98,7 +169,7 @@ impl Equation {
 #[derive(Debug)]
 struct Context {
     equations: Vec<(Equation, Option<Span>)>,
-    /// n € deps[m] if the equation m depends on the equation n
+    /// n in deps[m] if the equation m depends on the equation n
     deps: Vec<Vec<usize>>,
     /// we replace all idents by a pair whose first element is the number
     /// of the equation introducing it (0 if it is an input) and whose
@@ -106,6 +177,8 @@ struct Context {
     store: StringPatriciaMap<SIdent>,
     order: Vec<usize>,
     cells: usize,
+    /// names of nodes that are instanciated in this node
+    node_deps: Vec<Ident>,
 }
 
 impl Context {
@@ -116,6 +189,7 @@ impl Context {
             store: StringPatriciaMap::new(),
             order: Vec::new(),
             cells: 0,
+            node_deps: Vec::new(),
         }
     }
 
@@ -257,6 +331,8 @@ impl Context {
                         arguments: args,
                     }
                 } else {
+                    self.node_deps.push(function.clone());
+
                     let s = format!("#{}", self.equations.len());
                     let i = self.equations.len();
                     let ty = ty.clone();
@@ -269,7 +345,7 @@ impl Context {
                     self.cells += 1;
 
                     self.deps.push(Vec::new());
-                    // dumme EqKind::Input
+                    // dummy EqKind::Input
                     self.equations
                         .push((Equation::new(ty.clone(), EqKind::Input), None));
 
@@ -310,8 +386,6 @@ impl Context {
         parent: Option<usize>,
         visited: &mut [(u8, Option<usize>)],
     ) -> Result<(), Error> {
-        static mut A: usize = 0;
-        unsafe { A += 1 };
         if visited[idx].0 == 1 {
             let mut cycle = vec![self.equations[idx].1.unwrap()];
             let mut current = parent.unwrap();
@@ -321,7 +395,7 @@ impl Context {
                     Some(curr) => curr,
                     None => {
                         // the first and last equations are the same but no other equations
-                        // depends on this one
+                        // depend on this one
                         cycle.pop();
                         break;
                     }
@@ -350,15 +424,14 @@ impl Context {
     }
 }
 
-impl TryFrom<TNode> for Node {
-    type Error = Error;
-
-    fn try_from(node: TNode) -> Result<Self, Error> {
+impl Node {
+    fn schedule(node: TNode, node_deps: &mut StringPatriciaMap<Vec<Ident>>) -> Result<Self, Error> {
         let name = node.name.clone();
         let ret = node.ret.clone();
 
         let mut context = Context::new();
         context.schedule_eq(node)?;
+        node_deps.insert(name.to_string(), context.node_deps);
 
         let params = context.equations[0].0.types.clone();
 
