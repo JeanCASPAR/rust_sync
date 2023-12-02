@@ -1,14 +1,17 @@
+use std::mem::MaybeUninit;
+
 use patricia_tree::StringPatriciaMap;
 use proc_macro2::Span;
 use syn::Ident;
 
 use crate::{
     error::Error,
-    parser::{MathBinOp, Types},
+    parser::{BaseType, MathBinOp, Types},
     typing::{Ast as TAst, Expr as TExpr, ExprKind as TExprKind, Node as TNode},
 };
 
-pub type SIdent = (usize, usize);
+#[derive(Debug, Clone, Copy)]
+pub struct SIdent(pub usize, pub usize);
 
 #[derive(Debug)]
 pub struct Ast {
@@ -106,8 +109,6 @@ pub struct Node {
     pub ret_vars: Vec<SIdent>,
     pub ret_type: Types,
     pub equations: Vec<Equation>,
-    pub deps: Vec<Vec<usize>>,
-    pub order: Vec<usize>,
 }
 
 #[derive(Debug)]
@@ -144,9 +145,6 @@ pub enum ExprKind {
     Float(f64),
     Bool(bool),
     FloatCast(Box<Expr>),
-    When(Box<Expr>, SIdent),
-    WhenNot(Box<Expr>, SIdent),
-    Merge(SIdent, Box<Expr>, Box<Expr>),
     FunCall {
         function: Ident,
         arguments: Vec<Expr>,
@@ -199,7 +197,7 @@ impl Context {
         self.deps.push(Vec::new());
         for (i, param) in node.params.0.iter().enumerate() {
             self.equations[0].0.types.push(param.ty.clone());
-            self.store.insert(param.id.to_string(), (0, i));
+            self.store.insert(param.id.to_string(), SIdent(0, i));
         }
 
         for decl in node.body.iter() {
@@ -212,7 +210,7 @@ impl Context {
             ));
 
             for (j, var) in decl.vars.iter().enumerate() {
-                self.store.insert(var.id.to_string(), (i, j));
+                self.store.insert(var.id.to_string(), SIdent(i, j));
             }
         }
 
@@ -236,9 +234,9 @@ impl Context {
         let ty = e.types;
         let kind = match e.kind {
             TExprKind::Var(id) => {
-                let (i, j) = self.store.get(id.to_string()).unwrap().clone();
+                let SIdent(i, j) = self.store.get(id.to_string()).unwrap().clone();
                 add_dep(i);
-                ExprKind::Var((i, j))
+                ExprKind::Var(SIdent(i, j))
             }
             TExprKind::Unit => ExprKind::Unit,
             TExprKind::Pre(e) => {
@@ -248,7 +246,7 @@ impl Context {
                 if ty.len() > 1 {
                     todo!("pre with tuple unimplemented yet")
                 }
-                self.store.insert(s.clone(), (i, 0));
+                self.store.insert(s.clone(), SIdent(i, 0));
                 self.deps.push(Vec::new());
 
                 self.equations
@@ -297,16 +295,12 @@ impl Context {
             TExprKind::When(e, id) => {
                 let id = self.store.get(id.to_string()).unwrap().clone();
                 add_dep(id.0);
-                let e = self.normalize_expr(*e, eq, depends);
-
-                ExprKind::When(Box::new(e), id)
+                self.normalize_expr(*e, eq, depends).kind
             }
             TExprKind::WhenNot(e, id) => {
                 let id = self.store.get(id.to_string()).unwrap().clone();
                 add_dep(id.0);
-                let e = self.normalize_expr(*e, eq, depends);
-
-                ExprKind::WhenNot(Box::new(e), id)
+                self.normalize_expr(*e, eq, depends).kind
             }
             TExprKind::Merge(id, e_when, e_whennot) => {
                 let id = self.store.get(id.to_string()).unwrap().clone();
@@ -314,7 +308,14 @@ impl Context {
                 let e_when = self.normalize_expr(*e_when, eq, depends);
                 let e_whennot = self.normalize_expr(*e_whennot, eq, depends);
 
-                ExprKind::Merge(id, Box::new(e_when), Box::new(e_whennot))
+                ExprKind::If(
+                    Box::new(Expr {
+                        kind: ExprKind::Var(id),
+                        ty: Types::from_elem(BaseType::Bool.into(), 1),
+                    }),
+                    Box::new(e_when),
+                    Box::new(e_whennot),
+                )
             }
             TExprKind::FunCall {
                 extern_symbol,
@@ -337,7 +338,7 @@ impl Context {
                     let i = self.equations.len();
                     let ty = ty.clone();
                     for j in 0..ty.len() {
-                        self.store.insert(s.clone(), (i, j));
+                        self.store.insert(s.clone(), SIdent(i, j));
                     }
                     add_dep(i);
 
@@ -361,7 +362,7 @@ impl Context {
                         cell,
                     };
 
-                    ExprKind::Tuple((0..ty.len()).into_iter().map(|j| (i, j)).collect())
+                    ExprKind::Tuple((0..ty.len()).into_iter().map(|j| SIdent(i, j)).collect())
                 }
             }
         };
@@ -424,6 +425,27 @@ impl Context {
     }
 }
 
+fn permut(v: &mut Vec<Equation>, permutations: Vec<usize>) {
+    assert_eq!(v.len(), permutations.len());
+
+    let mut src = std::mem::replace(v, Vec::with_capacity(v.len()));
+
+    unsafe {
+        src.set_len(0);
+    }
+
+    let slice = v.spare_capacity_mut();
+    let n = permutations.len();
+
+    for (i, j) in permutations.into_iter().enumerate() {
+        slice[j].write(unsafe { src.as_ptr().add(i).read() });
+    }
+
+    unsafe {
+        v.set_len(n);
+    }
+}
+
 impl Node {
     fn schedule(node: TNode, node_deps: &mut StringPatriciaMap<Vec<Ident>>) -> Result<Self, Error> {
         let name = node.name.clone();
@@ -440,8 +462,8 @@ impl Node {
             .map(|(id, ty)| (context.store.get(&id.to_string()).unwrap().clone(), ty))
             .unzip();
 
-        let order = context.order;
-        let equations = context.equations.into_iter().map(|eq| eq.0).collect();
+        let mut equations = context.equations.into_iter().map(|eq| eq.0).collect();
+        permut(&mut equations, context.order);
 
         Ok(Node {
             name,
@@ -449,8 +471,6 @@ impl Node {
             ret_vars,
             ret_type,
             equations,
-            deps: context.deps,
-            order,
         })
     }
 }

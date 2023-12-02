@@ -3,6 +3,7 @@ use syn::parse_macro_input;
 
 extern crate proc_macro;
 
+mod codegen;
 mod error;
 mod parser;
 mod scheduler;
