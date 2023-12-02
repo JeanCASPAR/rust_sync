@@ -2,8 +2,8 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 
 use crate::{
-    parser::{BaseType, BoolBinOp, CompOp, MathBinOp, Type, Types},
-    scheduler::{EqKind, Equation, Expr, ExprKind, Node, SIdent},
+    parser::{BaseType, BoolBinOp, CompOp, MathBinOp},
+    scheduler::{EqKind, Equation, Expr, ExprKind, Node, SIdent, Types},
 };
 
 impl ToTokens for BaseType {
@@ -17,17 +17,9 @@ impl ToTokens for BaseType {
     }
 }
 
-impl ToTokens for Type {
+impl ToTokens for Types {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        self.base.to_tokens(tokens)
-    }
-}
-
-struct WrapTypes<'a>(&'a Types);
-
-impl ToTokens for WrapTypes<'_> {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let types = self.0;
+        let types = &self.inner;
         tokens.extend(quote! {
             (#(#types),*,)
         })
@@ -197,7 +189,7 @@ impl ToTokens for Node {
                 EqKind::Expr(_) | EqKind::Input => (),
                 EqKind::NodeCall { cell, .. } => {
                     let field = format_ident!("cell_{}", cell);
-                    let ty = WrapTypes(&eq.types);
+                    let ty = &eq.types;
 
                     tokens.extend(quote! {
                         #field: ::std::box::Box<::std::mem::MaybeUninit<#ty>>,
@@ -205,7 +197,7 @@ impl ToTokens for Node {
                 }
                 EqKind::CellExpr(_, cell) => {
                     let field = format_ident!("cell_{}", cell);
-                    let ty = WrapTypes(&eq.types);
+                    let ty = &eq.types;
 
                     tokens.extend(quote! {
                         #field: ::std::mem::MaybeUninit<#ty>,
@@ -220,7 +212,7 @@ impl ToTokens for Node {
                 EqKind::Expr(_) | EqKind::Input => (),
                 EqKind::NodeCall { cell, .. } => {
                     let field = format_ident!("cell_{}", cell);
-                    let ty = WrapTypes(&eq.types);
+                    let ty = &eq.types;
 
                     tokens.extend(quote! {
                         #field: ::std::box::Box::new(<#ty>::new()),
@@ -251,19 +243,16 @@ impl ToTokens for Node {
         let compute = WrapEquations::new(
             &self.equations,
             |eq: &Equation, i, tokens: &mut TokenStream| {
-                let active = eq.types.iter().flat_map(|ty| ty.clocks.iter()).fold(
-                    quote! { true },
-                    |acc, clock| {
-                        let id = &clock.clock; // TODO: replace id by a SIdent
-                        let pos = clock.positive;
-                        quote! {
-                            #acc && (#id == #pos)
-                        }
-                    },
-                );
+                let is_active = eq.types.clocks.iter().fold(quote! { true }, |acc, clock| {
+                    let id = &clock.clock;
+                    let pos = clock.positive;
+                    quote! {
+                        #acc && (#id == #pos)
+                    }
+                });
 
                 let var = format_ident!("tmp_{}", i);
-                let ty = WrapTypes(&eq.types);
+                let ty = &eq.types;
                 let ts = match &eq.kind {
                     EqKind::Input => {
                         assert_eq!(i, 0);
@@ -284,7 +273,7 @@ impl ToTokens for Node {
                     }
                 };
                 tokens.extend(quote! {
-                    let #var: ::std::mem::MaybeUninit<#ty> = if #active {
+                    let #var: ::std::mem::MaybeUninit<#ty> = if #is_active {
                         ::std::mem::MaybeUninit::new(#ts)
                     } else {
                         ::std::mem::MaybeUninit::uninit();
@@ -318,8 +307,8 @@ impl ToTokens for Node {
             },
         );
 
-        let input_types = WrapTypes(&self.params);
-        let ret_types = WrapTypes(&self.ret_type);
+        let input_types = &self.params;
+        let ret_types = &self.ret_types;
         let ret = &self.ret_vars;
 
         let ts = quote! {

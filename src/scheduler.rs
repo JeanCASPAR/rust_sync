@@ -1,15 +1,67 @@
 use patricia_tree::StringPatriciaMap;
 use proc_macro2::Span;
+use smallvec::SmallVec;
 use syn::Ident;
 
 use crate::{
     error::Error,
-    parser::{BaseType, BoolBinOp, CompOp, MathBinOp, Types},
+    parser::{BaseType, BoolBinOp, ClockType as PClockType, CompOp, MathBinOp, Types as PTypes},
     typing::{Ast as TAst, Expr as TExpr, ExprKind as TExprKind, Node as TNode},
 };
 
 #[derive(Debug, Clone, Copy)]
 pub struct SIdent(pub usize, pub usize);
+
+#[derive(Debug, Clone)]
+pub struct ClockType {
+    pub positive: bool,
+    pub clock: SIdent,
+}
+
+impl ClockType {
+    fn from(clock: PClockType, store: &mut StringPatriciaMap<SIdent>) -> Self {
+        Self {
+            positive: clock.positive,
+            clock: store.get(clock.clock.to_string()).unwrap().clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Types {
+    pub inner: SmallVec<[BaseType; 1]>,
+    pub clocks: Vec<ClockType>,
+}
+
+impl Types {
+    fn from(types: PTypes, store: &mut StringPatriciaMap<SIdent>) -> Self {
+        let mut inner = SmallVec::with_capacity(types.len());
+        let mut clocks = Vec::new();
+        for ty in types {
+            inner.push(ty.base);
+            if !clocks.is_empty() {
+                // we suppose that all types have the same clocks in a tuple
+                // TODO: change when clocks are supported by types at typing
+                clocks.extend(
+                    ty.clocks
+                        .into_iter()
+                        .map(|clock| ClockType::from(clock, store)),
+                );
+            }
+        }
+
+        Self { inner, clocks }
+    }
+}
+
+impl Types {
+    pub fn new() -> Self {
+        Self {
+            inner: SmallVec::new(),
+            clocks: Vec::new(),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Ast {
@@ -105,7 +157,7 @@ pub struct Node {
     pub name: Ident,
     pub params: Types,
     pub ret_vars: Vec<SIdent>,
-    pub ret_type: Types,
+    pub ret_types: Types,
     pub equations: Vec<Equation>,
 }
 
@@ -196,7 +248,8 @@ impl Context {
             .push((Equation::new(Types::new(), EqKind::Input), None));
         self.deps.push(Vec::new());
         for (i, param) in node.params.0.iter().enumerate() {
-            self.equations[0].0.types.push(param.ty.clone());
+            // we suppose that input types do not have a clock
+            self.equations[0].0.types.inner.push(param.ty.base.clone());
             self.store.insert(param.id.to_string(), SIdent(0, i));
         }
 
@@ -205,7 +258,10 @@ impl Context {
             self.deps.push(Vec::new());
             // dummy EqKind::Input here because we cannot yet translate the expression
             self.equations.push((
-                Equation::new(decl.expr.inner.types.clone(), EqKind::Input),
+                Equation::new(
+                    Types::from(decl.expr.inner.types.clone(), &mut self.store),
+                    EqKind::Input,
+                ),
                 Some(decl.expr.span),
             ));
 
@@ -231,7 +287,7 @@ impl Context {
                 self.deps[eq].push(i);
             }
         };
-        let ty = e.types;
+        let ty = Types::from(e.types, &mut self.store);
         let kind = match e.kind {
             TExprKind::Var(id) => {
                 let SIdent(i, j) = self.store.get(id.to_string()).unwrap().clone();
@@ -243,7 +299,7 @@ impl Context {
                 let s = format!("#{}", self.equations.len());
                 let i = self.equations.len();
                 let ty = ty.clone();
-                if ty.len() > 1 {
+                if ty.inner.len() > 1 {
                     todo!("pre with tuple unimplemented yet")
                 }
                 self.store.insert(s.clone(), SIdent(i, 0));
@@ -323,7 +379,10 @@ impl Context {
                 ExprKind::If(
                     Box::new(Expr {
                         kind: ExprKind::Var(id),
-                        ty: Types::from_elem(BaseType::Bool.into(), 1),
+                        ty: Types::from(
+                            PTypes::from_elem(BaseType::Bool.into(), 1),
+                            &mut self.store,
+                        ),
                     }),
                     Box::new(e_when),
                     Box::new(e_whennot),
@@ -349,7 +408,7 @@ impl Context {
                     let s = format!("#{}", self.equations.len());
                     let i = self.equations.len();
                     let ty = ty.clone();
-                    for j in 0..ty.len() {
+                    for j in 0..ty.inner.len() {
                         self.store.insert(s.clone(), SIdent(i, j));
                     }
                     add_dep(i);
@@ -374,7 +433,12 @@ impl Context {
                         cell,
                     };
 
-                    ExprKind::Tuple((0..ty.len()).into_iter().map(|j| SIdent(i, j)).collect())
+                    ExprKind::Tuple(
+                        (0..ty.inner.len())
+                            .into_iter()
+                            .map(|j| SIdent(i, j))
+                            .collect(),
+                    )
                 }
             }
         };
@@ -469,10 +533,11 @@ impl Node {
 
         let params = context.equations[0].0.types.clone();
 
-        let (ret_vars, ret_type) = ret
+        let (ret_vars, ret_types) = ret
             .into_iter()
             .map(|(id, ty)| (context.store.get(&id.to_string()).unwrap().clone(), ty))
             .unzip();
+        let ret_types = Types::from(ret_types, &mut context.store);
 
         let mut equations = context.equations.into_iter().map(|eq| eq.0).collect();
         permut(&mut equations, context.order);
@@ -481,7 +546,7 @@ impl Node {
             name,
             params,
             ret_vars,
-            ret_type,
+            ret_types,
             equations,
         })
     }
