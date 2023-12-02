@@ -1,6 +1,8 @@
 use rust_sync::sync;
 
 sync! {
+    #![pass(1)]
+    
     node non(a : int, b : int) = (a, b);
     
     node oui() = ()

@@ -1,5 +1,5 @@
 error: type mismatch: `bool` is not castable to float
- --> tests/typing/fail/float-cast-01.rs:6:21
+ --> tests/typing/fail/float-cast-01.rs:8:21
   |
-6 |         a : float = false as float;
+8 |         a : float = false as float;
   |                     ^^^^^^^^^^^^^^

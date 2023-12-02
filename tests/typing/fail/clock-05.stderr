@@ -1,5 +1,5 @@
 error: Variable `c` is undefined.
- --> tests/typing/fail/clock-05.rs:6:27
+ --> tests/typing/fail/clock-05.rs:8:27
   |
-6 |         a : float = merge c {
+8 |         a : float = merge c {
   |                           ^

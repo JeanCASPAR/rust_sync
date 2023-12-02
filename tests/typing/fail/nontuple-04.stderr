@@ -1,5 +1,5 @@
 error: tuples don't exist: int * int is not a valid type...
- --> tests/typing/fail/nontuple-04.rs:6:23
+ --> tests/typing/fail/nontuple-04.rs:8:23
   |
-6 |         a : int = 3 + oui();
+8 |         a : int = 3 + oui();
   |                       ^^^^^

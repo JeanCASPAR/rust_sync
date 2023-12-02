@@ -1,7 +1,7 @@
 error: clock error: the expression of the true branch in a merge has the base clock
- --> tests/typing/fail/clock-06.rs:7:21
+ --> tests/typing/fail/clock-06.rs:9:21
   |
-7 |             true => 3.0,
+9 |             true => 3.0,
   |                     ^^^
   |
   = help: Try adding ` when c`.

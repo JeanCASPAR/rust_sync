@@ -1,6 +1,8 @@
 use rust_sync::sync;
 
 sync! {
+    #![pass(1)]
+    
     node oui() = ()
     where
         a : float = merge c {
