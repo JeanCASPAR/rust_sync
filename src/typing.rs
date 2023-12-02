@@ -336,11 +336,16 @@ impl Expr {
             }
             PExpr::When(e, _, clock) => {
                 let clock_id = clock.to_string();
-                let Some((clock_type, _clock_span)) = context.get(&clock_id) else {
-                    todo!("raise error: undefined variable {clock_id}");
+                let Some((clock_type, clock_span)) = context.get(&clock_id) else {
+                    return Err(Error::undef_var(&clock));
                 };
                 if clock_type.base != BaseType::Bool {
-                    todo!("raise error: clock not boolean");
+                    return Err(Error::clock_not_boolean(
+                        clock.span(),
+                        clock_id,
+                        clock_type.base,
+                        *clock_span,
+                    ));
                 }
                 let typed_e = Self::do_stuff(*e, context, node_types, first_index, None)?;
                 let mut types = typed_e.types.clone();
@@ -357,11 +362,16 @@ impl Expr {
             }
             PExpr::WhenNot(e, _, clock) => {
                 let clock_id = clock.to_string();
-                let Some((clock_type, _clock_span)) = context.get(&clock_id) else {
-                    todo!("raise error: undefined variable {clock_id}");
+                let Some((clock_type, clock_span)) = context.get(&clock_id) else {
+                    return Err(Error::undef_var(&clock));
                 };
                 if clock_type.base != BaseType::Bool {
-                    todo!("raise error: clock not boolean");
+                    return Err(Error::clock_not_boolean(
+                        clock.span(),
+                        clock_id,
+                        clock_type.base,
+                        *clock_span,
+                    ));
                 }
                 let typed_e = Self::do_stuff(*e, context, node_types, first_index, None)?;
                 let mut types = typed_e.types.clone();
@@ -437,19 +447,39 @@ impl Expr {
                 }
 
                 if !true_last.positive {
-                    todo!("raise error: the true branch should be on positive {clock_id}");
+                    return Err(Error::merge_branch_wrong_positivity(
+                        e_true_span,
+                        true,
+                        clock_id,
+                    ));
                 }
 
                 if false_last.positive {
-                    todo!("raise error: the false branch should be on negative {clock_id}");
+                    return Err(Error::merge_branch_wrong_positivity(
+                        e_false_span,
+                        false,
+                        clock_id,
+                    ));
                 }
 
                 if true_last.clock.to_string() != clock_id {
-                    todo!("raise error: the true branch doesn't have the right clock");
+                    return Err(Error::merge_branch_wrong_clock(
+                        e_true_span,
+                        true,
+                        clock_id,
+                        clock.span(),
+                        true_last.clock.to_string(),
+                    ));
                 }
 
                 if false_last.clock.to_string() != clock_id {
-                    todo!("raise error: the false branch doesn't have the right clock");
+                    return Err(Error::merge_branch_wrong_clock(
+                        e_false_span,
+                        false,
+                        clock_id,
+                        clock.span(),
+                        false_last.clock.to_string(),
+                    ));
                 }
 
                 let merge_type = Type {
@@ -472,7 +502,6 @@ impl Expr {
                 } else if let Some(ty) = toplevel_type {
                     (ty, true)
                 } else {
-                    // Raise error
                     return Err(Error::external_symbol_not_toplevel(f.span(), f.to_string()));
                 };
 

@@ -5,7 +5,7 @@ use proc_macro2::{Ident, Span};
 use proc_macro_error::abort;
 use smallvec::smallvec as types;
 
-use crate::parser::{ClockType, Type, Types, TypesFmt};
+use crate::parser::{BaseType, ClockType, Type, Types, TypesFmt};
 
 #[derive(Debug)]
 pub struct Error {
@@ -121,6 +121,47 @@ impl Error {
         )
     }
 
+    pub fn merge_branch_wrong_positivity(span: Span, true_branch: bool, clock: String) -> Self {
+        Self::new(
+            ErrorKind::MergeBranchWrongPositivity { true_branch, clock },
+            span,
+        )
+    }
+
+    pub fn merge_branch_wrong_clock(
+        span: Span,
+        true_branch: bool,
+        expected_clock: String,
+        expected_clock_span: Span,
+        branch_clock: String,
+    ) -> Self {
+        Self::new(
+            ErrorKind::MergeBranchWrongClock {
+                true_branch,
+                expected_clock,
+                expected_clock_span,
+                branch_clock,
+            },
+            span,
+        )
+    }
+
+    pub fn clock_not_boolean(
+        span: Span,
+        clock: String,
+        found_type: BaseType,
+        decl_span: Span,
+    ) -> Self {
+        Self::new(
+            ErrorKind::ClockNotBoolean {
+                clock,
+                found_type,
+                decl_span,
+            },
+            span,
+        )
+    }
+
     pub fn raise(self) -> ! {
         match *self.kind {
             ErrorKind::TwiceVar { name, def_span } => {
@@ -220,6 +261,41 @@ impl Error {
                     .chain(clock_clock.iter().map(ToString::to_string))
                     .format(" on ");
             ),
+            ErrorKind::MergeBranchWrongPositivity { true_branch, clock } => abort!(
+                self.span,
+                "clock error: the {} should be on {} {}",
+                true_branch,
+                if true_branch { "positive" } else { "negative" },
+                clock,
+            ),
+            ErrorKind::MergeBranchWrongClock {
+                true_branch,
+                expected_clock,
+                expected_clock_span,
+                branch_clock,
+            } => abort!(
+                self.span,
+                "clock error: the {} branch isn't merged on the right clock",
+                true_branch;
+                note = "the last clock of the {} branch is {}",
+                true_branch,
+                branch_clock;
+                help = expected_clock_span => "the clock to be merged on is {}",
+                expected_clock
+            ),
+            ErrorKind::ClockNotBoolean {
+                clock,
+                found_type,
+                decl_span,
+            } => abort!(
+                self.span,
+                "type error: the clock `{}` should have type `bool`, found `{}`",
+                clock,
+                found_type;
+                help = decl_span => "`{}` was declared here with type `{}`",
+                clock,
+                found_type
+            ),
         }
     }
 }
@@ -266,5 +342,20 @@ pub enum ErrorKind {
         clock_clock: Vec<ClockType>,
         clock: Ident,
         branch_clock: Vec<ClockType>,
+    },
+    MergeBranchWrongPositivity {
+        true_branch: bool,
+        clock: String,
+    },
+    MergeBranchWrongClock {
+        true_branch: bool,
+        expected_clock: String,
+        expected_clock_span: Span,
+        branch_clock: String,
+    },
+    ClockNotBoolean {
+        clock: String,
+        found_type: BaseType,
+        decl_span: Span,
     },
 }
