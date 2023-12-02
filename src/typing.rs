@@ -6,8 +6,8 @@ use syn::Ident;
 use crate::{
     error::Error,
     parser::{
-        BaseType, ClockType, Decl as PDecl, DeclVar, Expr as PExpr, MathBinOp, Module,
-        Node as PNode, NodeParams, NodeType, Spanned, Type, Types,
+        BaseType, BoolBinOp, ClockType, CompOp, Decl as PDecl, DeclVar, Expr as PExpr, MathBinOp,
+        Module, Node as PNode, NodeParams, NodeType, Spanned, Type, Types,
     },
 };
 
@@ -269,10 +269,9 @@ impl Expr {
                 }
                 Self {
                     types: typed_left.types.clone(),
-                    kind: ExprKind::BinOp(Box::new(typed_left), op, Box::new(typed_right)),
+                    kind: ExprKind::MathBinOp(Box::new(typed_left), op, Box::new(typed_right)),
                 }
             }
-            PExpr::BoolBinOp(_, _, _, _) | PExpr::CompOp(_, _, _, _) => todo!(),
             PExpr::If(cond, then_branch, else_branch) => {
                 let then_branch_span = then_branch.span;
                 let typed_then =
@@ -514,6 +513,64 @@ impl Expr {
                     },
                 }
             }
+            PExpr::BoolBinOp(left, op, _op_span, right) => {
+                let left_span = left.span;
+                let right_span = right.span;
+                let typed_left = Self::do_stuff(*left, context, node_types, first_index, None)?;
+                let typed_right = Self::do_stuff(*right, context, node_types, first_index, None)?;
+                let left_type = typed_left.types.singleton(left_span)?;
+                let right_type = typed_right.types.singleton(right_span)?;
+
+                if left_type.base != BaseType::Bool {
+                    return Err(Error::number_logic(left_span))?;
+                }
+
+                if right_type.base != BaseType::Bool {
+                    return Err(Error::number_logic(right_span))?;
+                }
+
+                if left_type.clocks != right_type.clocks {
+                    return Err(Error::type_mismatch(
+                        span,
+                        left_type.clone(),
+                        right_type.clone(),
+                    ));
+                }
+
+                Self {
+                    types: types![left_type.clone()],
+                    kind: ExprKind::BoolBinOp(Box::new(typed_left), op, Box::new(typed_right)),
+                }
+            }
+            PExpr::CompOp(left, op, _op_span, right) => {
+                let generic_op = matches!(op, CompOp::Eq | CompOp::NEq);
+                let left_span = left.span;
+                let right_span = right.span;
+                let typed_left = Self::do_stuff(*left, context, node_types, first_index, None)?;
+                let typed_right = Self::do_stuff(*right, context, node_types, first_index, None)?;
+                let left_type = typed_left.types.singleton(left_span)?;
+                let right_type = typed_right.types.singleton(right_span)?;
+
+                if left_type != right_type {
+                    return Err(Error::type_mismatch(
+                        span,
+                        left_type.clone(),
+                        right_type.clone(),
+                    ));
+                }
+
+                if !generic_op && matches!(left_type.base, BaseType::Bool | BaseType::Unit) {
+                    return Err(Error::bool_arithmetic(span));
+                }
+
+                Self {
+                    types: types![Type {
+                        base: BaseType::Bool,
+                        clocks: left_type.clocks.clone(),
+                    }],
+                    kind: ExprKind::CompOp(Box::new(typed_left), op, Box::new(typed_right)),
+                }
+            }
         })
     }
 }
@@ -526,7 +583,9 @@ pub enum ExprKind {
     Then(Box<Expr>, Box<Expr>),
     Minus(Box<Expr>),
     Not(Box<Expr>),
-    BinOp(Box<Expr>, MathBinOp, Box<Expr>),
+    MathBinOp(Box<Expr>, MathBinOp, Box<Expr>),
+    BoolBinOp(Box<Expr>, BoolBinOp, Box<Expr>),
+    CompOp(Box<Expr>, CompOp, Box<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     Int(i64),
     Float(f64),

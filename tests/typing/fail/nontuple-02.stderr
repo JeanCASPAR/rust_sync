@@ -1,0 +1,5 @@
+error: tuples don't exist: int * int is not a valid type...
+  --> tests/typing/fail/nontuple-02.rs:10:30
+   |
+10 |         (a : int, b : int) = non(1, 2) && non(2, 1);
+   |                              ^^^^^^^^^
