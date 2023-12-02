@@ -1,0 +1,11 @@
+error: type error: the clock `a` should have type `bool`, found `float`
+ --> tests/typing/fail/clock-02.rs:8:30
+  |
+8 |         a : float = 3.0 when a;
+  |                              ^
+  |
+help: `a` was declared here with type `float`
+ --> tests/typing/fail/clock-02.rs:8:9
+  |
+8 |         a : float = 3.0 when a;
+  |         ^

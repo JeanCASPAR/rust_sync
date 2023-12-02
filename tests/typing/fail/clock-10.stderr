@@ -1,0 +1,12 @@
+error: clock error: the false branch isn't merged on the right clock
+  --> tests/typing/fail/clock-10.rs:10:22
+   |
+10 |             false => 2.0 whennot c2,
+   |                      ^^^^^^^^^^^^^^
+   |
+   = note: the last clock of the false branch is c2
+help: the clock to be merged on is c1
+  --> tests/typing/fail/clock-10.rs:8:27
+   |
+8  |         a : float = merge c1 {
+   |                           ^^
