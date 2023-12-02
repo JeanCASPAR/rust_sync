@@ -1,13 +1,12 @@
-error: proc macro panicked
-  --> tests/typing/fail/clock-10.rs:3:1
+error: clock error: the false branch isn't merged on the right clock
+  --> tests/typing/fail/clock-10.rs:10:22
    |
-3  | / sync! {
-4  | |     #![pass(1)]
-5  | |
-6  | |     node oui(c1 : bool, c2 : bool) = ()
-...  |
-11 | |         };
-12 | | }
-   | |_^
+10 |             false => 2.0 whennot c2,
+   |                      ^^^^^^^^^^^^^^
    |
-   = help: message: not yet implemented: raise error: the false branch doesn't have the right clock
+   = note: the last clock of the false branch is c2
+help: the clock to be merged on is c1
+  --> tests/typing/fail/clock-10.rs:8:27
+   |
+8  |         a : float = merge c1 {
+   |                           ^^

@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 
 use crate::{
-    parser::{BaseType, MathBinOp, Type, Types},
+    parser::{BaseType, BoolBinOp, CompOp, MathBinOp, Type, Types},
     scheduler::{EqKind, Equation, Expr, ExprKind, Node, SIdent},
 };
 
@@ -68,6 +68,30 @@ impl ToTokens for MathBinOp {
     }
 }
 
+impl ToTokens for BoolBinOp {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let ts = match self {
+            BoolBinOp::And => quote! {&&},
+            BoolBinOp::Or => quote! {||},
+        };
+        tokens.extend(ts);
+    }
+}
+
+impl ToTokens for CompOp {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let ts = match self {
+            CompOp::Ge => quote! {>=},
+            CompOp::Gt => quote! {>=},
+            CompOp::Le => quote! {>=},
+            CompOp::Lt => quote! {>=},
+            CompOp::Eq => quote! {>=},
+            CompOp::NEq => quote! {>=},
+        };
+        tokens.extend(ts);
+    }
+}
+
 impl ToTokens for SIdent {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let Self(i, j) = self;
@@ -117,7 +141,14 @@ impl ToTokens for Expr {
             ExprKind::Not(e) => {
                 quote! { (!#e) }
             }
-            ExprKind::BinOp(e1, op, e2) => {
+            ExprKind::MathBinOp(e1, op, e2) => {
+                quote! { (#e1 #op #e2) }
+            }
+            ExprKind::BoolBinOp(e1, op, e2) => {
+                quote! { (#e1 #op #e2) }
+            }
+
+            ExprKind::CompOp(e1, op, e2) => {
                 quote! { (#e1 #op #e2) }
             }
             ExprKind::If(cond, e_then, e_else) => {

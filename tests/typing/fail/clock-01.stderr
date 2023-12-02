@@ -1,13 +1,5 @@
-error: proc macro panicked
- --> tests/typing/fail/clock-01.rs:3:1
+error: Variable `c` is undefined.
+ --> tests/typing/fail/clock-01.rs:8:30
   |
-3 | / sync! {
-4 | |     #![pass(1)]
-5 | |
-6 | |     node oui() = ()
-7 | |     where
-8 | |         a : float = 3.0 when c;
-9 | | }
-  | |_^
-  |
-  = help: message: not yet implemented: raise error: undefined variable c
+8 |         a : float = 3.0 when c;
+  |                              ^

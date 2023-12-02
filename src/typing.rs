@@ -6,8 +6,8 @@ use syn::Ident;
 use crate::{
     error::Error,
     parser::{
-        BaseType, ClockType, Decl as PDecl, DeclVar, Expr as PExpr, MathBinOp, Module,
-        Node as PNode, NodeParams, NodeType, Spanned, Type, Types,
+        BaseType, BoolBinOp, ClockType, CompOp, Decl as PDecl, DeclVar, Expr as PExpr, MathBinOp,
+        Module, Node as PNode, NodeParams, NodeType, Spanned, Type, Types,
     },
 };
 
@@ -276,11 +276,10 @@ impl Expr {
                 }
                 Self {
                     types: typed_left.types.clone(),
-                    kind: ExprKind::BinOp(Box::new(typed_left), op, Box::new(typed_right)),
+                    kind: ExprKind::MathBinOp(Box::new(typed_left), op, Box::new(typed_right)),
                     span,
                 }
             }
-            PExpr::BoolBinOp(_, _, _, _) | PExpr::CompOp(_, _, _, _) => todo!(),
             PExpr::If(cond, then_branch, else_branch) => {
                 let then_branch_span = then_branch.span;
                 let typed_then =
@@ -349,11 +348,16 @@ impl Expr {
             }
             PExpr::When(e, _, clock) => {
                 let clock_id = clock.to_string();
-                let Some((clock_type, _clock_span)) = context.get(&clock_id) else {
-                    todo!("raise error: undefined variable {clock_id}");
+                let Some((clock_type, clock_span)) = context.get(&clock_id) else {
+                    return Err(Error::undef_var(&clock));
                 };
                 if clock_type.base != BaseType::Bool {
-                    todo!("raise error: clock not boolean");
+                    return Err(Error::clock_not_boolean(
+                        clock.span(),
+                        clock_id,
+                        clock_type.base,
+                        *clock_span,
+                    ));
                 }
                 let typed_e = Self::do_stuff(*e, context, node_types, first_index, None)?;
                 let mut types = typed_e.types.clone();
@@ -371,11 +375,16 @@ impl Expr {
             }
             PExpr::WhenNot(e, _, clock) => {
                 let clock_id = clock.to_string();
-                let Some((clock_type, _clock_span)) = context.get(&clock_id) else {
-                    todo!("raise error: undefined variable {clock_id}");
+                let Some((clock_type, clock_span)) = context.get(&clock_id) else {
+                    return Err(Error::undef_var(&clock));
                 };
                 if clock_type.base != BaseType::Bool {
-                    todo!("raise error: clock not boolean");
+                    return Err(Error::clock_not_boolean(
+                        clock.span(),
+                        clock_id,
+                        clock_type.base,
+                        *clock_span,
+                    ));
                 }
                 let typed_e = Self::do_stuff(*e, context, node_types, first_index, None)?;
                 let mut types = typed_e.types.clone();
@@ -452,19 +461,39 @@ impl Expr {
                 }
 
                 if !true_last.positive {
-                    todo!("raise error: the true branch should be on positive {clock_id}");
+                    return Err(Error::merge_branch_wrong_positivity(
+                        e_true_span,
+                        true,
+                        clock_id,
+                    ));
                 }
 
                 if false_last.positive {
-                    todo!("raise error: the false branch should be on negative {clock_id}");
+                    return Err(Error::merge_branch_wrong_positivity(
+                        e_false_span,
+                        false,
+                        clock_id,
+                    ));
                 }
 
                 if true_last.clock.to_string() != clock_id {
-                    todo!("raise error: the true branch doesn't have the right clock");
+                    return Err(Error::merge_branch_wrong_clock(
+                        e_true_span,
+                        true,
+                        clock_id,
+                        clock.span(),
+                        true_last.clock.to_string(),
+                    ));
                 }
 
                 if false_last.clock.to_string() != clock_id {
-                    todo!("raise error: the false branch doesn't have the right clock");
+                    return Err(Error::merge_branch_wrong_clock(
+                        e_false_span,
+                        false,
+                        clock_id,
+                        clock.span(),
+                        false_last.clock.to_string(),
+                    ));
                 }
 
                 let merge_type = Type {
@@ -488,7 +517,6 @@ impl Expr {
                 } else if let Some(ty) = toplevel_type {
                     (ty, true)
                 } else {
-                    // Raise error
                     return Err(Error::external_symbol_not_toplevel(f.span(), f.to_string()));
                 };
 
@@ -499,6 +527,66 @@ impl Expr {
                         arguments: typed_args,
                         extern_symbol,
                     },
+                    span,
+                }
+            }
+            PExpr::BoolBinOp(left, op, _op_span, right) => {
+                let left_span = left.span;
+                let right_span = right.span;
+                let typed_left = Self::do_stuff(*left, context, node_types, first_index, None)?;
+                let typed_right = Self::do_stuff(*right, context, node_types, first_index, None)?;
+                let left_type = typed_left.types.singleton(left_span)?;
+                let right_type = typed_right.types.singleton(right_span)?;
+
+                if left_type.base != BaseType::Bool {
+                    return Err(Error::number_logic(left_span))?;
+                }
+
+                if right_type.base != BaseType::Bool {
+                    return Err(Error::number_logic(right_span))?;
+                }
+
+                if left_type.clocks != right_type.clocks {
+                    return Err(Error::type_mismatch(
+                        span,
+                        left_type.clone(),
+                        right_type.clone(),
+                    ));
+                }
+
+                Self {
+                    types: types![left_type.clone()],
+                    kind: ExprKind::BoolBinOp(Box::new(typed_left), op, Box::new(typed_right)),
+                    span,
+                }
+            }
+            PExpr::CompOp(left, op, _op_span, right) => {
+                let generic_op = matches!(op, CompOp::Eq | CompOp::NEq);
+                let left_span = left.span;
+                let right_span = right.span;
+                let typed_left = Self::do_stuff(*left, context, node_types, first_index, None)?;
+                let typed_right = Self::do_stuff(*right, context, node_types, first_index, None)?;
+                let left_type = typed_left.types.singleton(left_span)?;
+                let right_type = typed_right.types.singleton(right_span)?;
+
+                if left_type != right_type {
+                    return Err(Error::type_mismatch(
+                        span,
+                        left_type.clone(),
+                        right_type.clone(),
+                    ));
+                }
+
+                if !generic_op && matches!(left_type.base, BaseType::Bool | BaseType::Unit) {
+                    return Err(Error::bool_arithmetic(span));
+                }
+
+                Self {
+                    types: types![Type {
+                        base: BaseType::Bool,
+                        clocks: left_type.clocks.clone(),
+                    }],
+                    kind: ExprKind::CompOp(Box::new(typed_left), op, Box::new(typed_right)),
                     span,
                 }
             }
@@ -514,7 +602,9 @@ pub enum ExprKind {
     Then(Box<Expr>, Box<Expr>),
     Minus(Box<Expr>),
     Not(Box<Expr>),
-    BinOp(Box<Expr>, MathBinOp, Box<Expr>),
+    MathBinOp(Box<Expr>, MathBinOp, Box<Expr>),
+    BoolBinOp(Box<Expr>, BoolBinOp, Box<Expr>),
+    CompOp(Box<Expr>, CompOp, Box<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     Int(i64),
     Float(f64),

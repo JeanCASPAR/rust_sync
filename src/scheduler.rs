@@ -1,12 +1,10 @@
-use std::mem::MaybeUninit;
-
 use patricia_tree::StringPatriciaMap;
 use proc_macro2::Span;
 use syn::Ident;
 
 use crate::{
     error::Error,
-    parser::{BaseType, MathBinOp, Types},
+    parser::{BaseType, BoolBinOp, CompOp, MathBinOp, Types},
     typing::{Ast as TAst, Expr as TExpr, ExprKind as TExprKind, Node as TNode},
 };
 
@@ -139,7 +137,9 @@ pub enum ExprKind {
     Then(Box<Expr>, Box<Expr>),
     Minus(Box<Expr>),
     Not(Box<Expr>),
-    BinOp(Box<Expr>, MathBinOp, Box<Expr>),
+    MathBinOp(Box<Expr>, MathBinOp, Box<Expr>),
+    BoolBinOp(Box<Expr>, BoolBinOp, Box<Expr>),
+    CompOp(Box<Expr>, CompOp, Box<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     Int(i64),
     Float(f64),
@@ -271,11 +271,23 @@ impl Context {
                 let e = self.normalize_expr(*e, eq, depends);
                 ExprKind::Not(Box::new(e))
             }
-            TExprKind::BinOp(e1, op, e2) => {
+            TExprKind::MathBinOp(e1, op, e2) => {
                 let e1 = self.normalize_expr(*e1, eq, depends);
                 let e2 = self.normalize_expr(*e2, eq, depends);
 
-                ExprKind::BinOp(Box::new(e1), op, Box::new(e2))
+                ExprKind::MathBinOp(Box::new(e1), op, Box::new(e2))
+            }
+            TExprKind::BoolBinOp(e1, op, e2) => {
+                let e1 = self.normalize_expr(*e1, eq, depends);
+                let e2 = self.normalize_expr(*e2, eq, depends);
+
+                ExprKind::BoolBinOp(Box::new(e1), op, Box::new(e2))
+            }
+            TExprKind::CompOp(e1, op, e2) => {
+                let e1 = self.normalize_expr(*e1, eq, depends);
+                let e2 = self.normalize_expr(*e2, eq, depends);
+
+                ExprKind::CompOp(Box::new(e1), op, Box::new(e2))
             }
             TExprKind::If(b, e_then, e_else) => {
                 let b = self.normalize_expr(*b, eq, depends);
