@@ -31,7 +31,7 @@
         };
       in {
         defaultPackage = naerskLib.buildPackage {
-          pname = "!NAME!";
+          pname = "Rustre";
           root = ./.;
         };
         defaultApp = utils.lib.mkApp {
