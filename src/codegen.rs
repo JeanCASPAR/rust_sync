@@ -3,7 +3,7 @@ use quote::{format_ident, quote, ToTokens};
 
 use crate::{
     parser::{BaseType, BoolBinOp, CompOp, MathBinOp},
-    scheduler::{EqKind, Equation, Expr, ExprKind, Node, SIdent, Types},
+    scheduler::{Ast, EqKind, Equation, Expr, ExprKind, Node, SIdent, Types},
 };
 
 impl ToTokens for BaseType {
@@ -20,8 +20,12 @@ impl ToTokens for BaseType {
 impl ToTokens for Types {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let types = &self.inner;
-        tokens.extend(quote! {
-            (#(#types),*,)
+        tokens.extend(if types.is_empty() {
+            quote! { () }
+        } else {
+            quote! {
+                (#(#types),*,)
+            }
         })
     }
 }
@@ -87,12 +91,12 @@ impl ToTokens for CompOp {
 impl ToTokens for SIdent {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let Self(i, j) = self;
-        let var = format_ident!("tmp_{}", i);
+        let var = format_ident!("var_{}", i);
         let j = syn::Index::from(*j);
 
         let ts = quote! {
             unsafe {
-                *(#var.as_ptr()).#j
+                (*#var.as_ptr()).#j
             }
         };
 
@@ -111,7 +115,7 @@ impl ToTokens for Expr {
                 let cell = format_ident!("cell_{}", i);
                 quote! {
                     unsafe {
-                        *(self.#cell.as_ptr()).0 // pre cells are always of size 1
+                        (*self.#cell.as_ptr()).0 // pre cells are always of size 1
                     }
                 }
             }
@@ -152,7 +156,6 @@ impl ToTokens for Expr {
             ExprKind::Float(x) => quote! { #x },
             ExprKind::Bool(b) => quote! { #b },
             ExprKind::FloatCast(e) => {
-                let e = &*e;
                 quote! { (#e as f64) }
             }
             ExprKind::FunCall {
@@ -187,12 +190,14 @@ impl ToTokens for Node {
             &self.equations,
             |eq: &Equation, _, tokens: &mut TokenStream| match eq.kind {
                 EqKind::Expr(_) | EqKind::Input => (),
-                EqKind::NodeCall { cell, .. } => {
+                EqKind::NodeCall {
+                    ref ident, cell, ..
+                } => {
                     let field = format_ident!("cell_{}", cell);
-                    let ty = &eq.types;
+                    let ty = format_ident!("Node{}", ident);
 
                     tokens.extend(quote! {
-                        #field: ::std::box::Box<::std::mem::MaybeUninit<#ty>>,
+                        #field: ::std::boxed::Box<#ty>,
                     });
                 }
                 EqKind::CellExpr(_, cell) => {
@@ -210,19 +215,21 @@ impl ToTokens for Node {
             &self.equations,
             |eq: &Equation, _, tokens: &mut TokenStream| match eq.kind {
                 EqKind::Expr(_) | EqKind::Input => (),
-                EqKind::NodeCall { cell, .. } => {
+                EqKind::NodeCall {
+                    ref ident, cell, ..
+                } => {
                     let field = format_ident!("cell_{}", cell);
-                    let ty = &eq.types;
+                    let ty = format_ident!("Node{}", ident);
 
                     tokens.extend(quote! {
-                        #field: ::std::box::Box::new(<#ty>::new()),
+                        #field: ::std::boxed::Box::new(<#ty>::new()),
                     })
                 }
                 EqKind::CellExpr(_, cell) => {
                     let field = format_ident!("cell_{}", cell);
 
                     tokens.extend(quote! {
-                        #field: ::std::mem::MaybeUninit::new_uninit(),
+                        #field: ::std::mem::MaybeUninit::uninit(),
                     })
                 }
             },
@@ -251,7 +258,7 @@ impl ToTokens for Node {
                     }
                 });
 
-                let var = format_ident!("tmp_{}", i);
+                let var = format_ident!("var_{}", i);
                 let ty = &eq.types;
                 let ts = match &eq.kind {
                     EqKind::Input => {
@@ -260,15 +267,25 @@ impl ToTokens for Node {
                             input
                         }
                     }
-                    EqKind::NodeCall { args, .. } => {
-                        let node = format_ident!("cell_{}", i);
-                        quote! {
-                            self.#node.step(#(#args),*)
+                    EqKind::NodeCall { args, cell, .. } => {
+                        let node = format_ident!("cell_{}", cell);
+                        if args.len() >= 1 {
+                            quote! {
+                                self.#node.step((#(#args),*,))
+                            }
+                        } else {
+                            quote! {
+                                self.#node.step(())
+                            }
                         }
                     }
                     EqKind::Expr(e) | EqKind::CellExpr(e, _) => {
-                        quote! {
-                            #e
+                        if ty.inner.len() == 1 && !matches!(e.kind, ExprKind::Tuple(_)) {
+                            quote! { (#e,) }
+                        } else {
+                            quote! {
+                                #e
+                            }
                         }
                     }
                 };
@@ -276,8 +293,8 @@ impl ToTokens for Node {
                     let #var: ::std::mem::MaybeUninit<#ty> = if #is_active {
                         ::std::mem::MaybeUninit::new(#ts)
                     } else {
-                        ::std::mem::MaybeUninit::uninit();
-                    }
+                        ::std::mem::MaybeUninit::uninit()
+                    };
                 });
             },
         );
@@ -285,21 +302,14 @@ impl ToTokens for Node {
         let save_cells = WrapEquations::new(
             &self.equations,
             |eq: &Equation, i, tokens: &mut TokenStream| match &eq.kind {
-                EqKind::NodeCall { cell, .. } => {
-                    let var = format_ident!("var_{}", i);
-                    let cell = format_ident!("cell_{}", cell);
-
-                    let ts = quote! {
-                        ::std::mem::swap(&mut *self.#cell, &mut #var);
-                    };
-                    tokens.extend(ts);
-                }
                 EqKind::CellExpr(_, cell) => {
                     let var = format_ident!("var_{}", i);
                     let cell = format_ident!("cell_{}", cell);
 
                     let ts = quote! {
-                        ::std::mem::swap(&mut *self.#cell, &mut #var);
+                        unsafe {
+                            self.#cell.as_mut_ptr().copy_from_nonoverlapping(#var.as_ptr(), 1);
+                        }
                     };
                     tokens.extend(ts);
                 }
@@ -313,25 +323,27 @@ impl ToTokens for Node {
 
         let ts = quote! {
             pub struct #name {
-                #fields_decl,
                 counter: usize,
+                #fields_decl
             }
 
-            impl struct #name {
-                fn new() -> Self {
+            impl #name {
+                pub fn new() -> Self {
                     Self {
-                        #fields_init,
                         counter: 0,
+                        #fields_init
                     }
                 }
 
-                fn reset(&mut self) {
+                pub fn reset(&mut self) {
                     #reset
                     self.counter = 0;
                 }
 
-                fn step(&mut self, input: #input_types) -> #ret_types {
+                pub fn step(&mut self, input: #input_types) -> #ret_types {
                     #compute
+
+                    self.counter += 1;
 
                     #save_cells
 
@@ -340,6 +352,16 @@ impl ToTokens for Node {
             }
         };
 
+        tokens.extend(ts);
+    }
+}
+
+impl ToTokens for Ast {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let nodes = &self.nodes;
+        let ts = quote! {
+            #(#nodes)*
+        };
         tokens.extend(ts);
     }
 }

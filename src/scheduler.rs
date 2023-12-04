@@ -52,6 +52,12 @@ impl Types {
 
         Self { inner, clocks }
     }
+
+    fn permut(&mut self, permutations: &mut [usize]) {
+        for clock in &mut self.clocks {
+            clock.clock.0 = permutations[clock.clock.0];
+        }
+    }
 }
 
 impl Types {
@@ -204,6 +210,54 @@ pub enum ExprKind {
     Tuple(Vec<SIdent>),
 }
 
+impl Expr {
+    fn permut(&mut self, permutations: &mut [usize]) {
+        self.ty.permut(permutations);
+        match &mut self.kind {
+            ExprKind::Var(id) => id.0 = permutations[id.0],
+            ExprKind::Then(e1, e2) => {
+                e1.permut(permutations);
+                e2.permut(permutations);
+            }
+            ExprKind::Minus(e) => e.permut(permutations),
+            ExprKind::Not(e) => e.permut(permutations),
+            ExprKind::MathBinOp(e1, _, e2) => {
+                e1.permut(permutations);
+                e2.permut(permutations);
+            }
+            ExprKind::BoolBinOp(e1, _, e2) => {
+                e1.permut(permutations);
+                e2.permut(permutations);
+            }
+            ExprKind::CompOp(e1, _, e2) => {
+                e1.permut(permutations);
+                e2.permut(permutations);
+            }
+            ExprKind::If(cond, e_then, e_else) => {
+                cond.permut(permutations);
+                e_then.permut(permutations);
+                e_else.permut(permutations);
+            }
+            ExprKind::Unit
+            | ExprKind::Pre(_)
+            | ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_) => (),
+            ExprKind::FloatCast(e) => e.permut(permutations),
+            ExprKind::FunCall { arguments, .. } => {
+                for arg in arguments {
+                    arg.permut(permutations);
+                }
+            }
+            ExprKind::Tuple(tuple) => {
+                for id in tuple {
+                    id.0 = permutations[id.0];
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Equation {
     pub types: Types,
@@ -296,12 +350,13 @@ impl Context {
             }
             TExprKind::Unit => ExprKind::Unit,
             TExprKind::Pre(e) => {
-                let s = format!("#{}", self.equations.len());
                 let i = self.equations.len();
+                let s = format!("#{}", i);
                 let ty = ty.clone();
                 if ty.inner.len() > 1 {
                     todo!("pre with tuple unimplemented yet")
                 }
+
                 self.store.insert(s.clone(), SIdent(i, 0));
                 self.deps.push(Vec::new());
 
@@ -309,7 +364,9 @@ impl Context {
                     .push((Equation::new(ty.clone(), EqKind::Input), Some(e.span)));
                 let cell = self.cells;
                 self.cells += 1;
+
                 let e = self.normalize_expr(*e, i, true);
+
                 self.equations[i].0.kind = EqKind::CellExpr(e, cell);
 
                 ExprKind::Pre(cell)
@@ -404,6 +461,8 @@ impl Context {
                     }
                 } else {
                     self.node_deps.push(function.clone());
+                    let cell = self.cells;
+                    self.cells += 1;
 
                     let s = format!("#{}", self.equations.len());
                     let i = self.equations.len();
@@ -413,9 +472,6 @@ impl Context {
                     }
                     add_dep(i);
 
-                    let cell = self.cells;
-                    self.cells += 1;
-
                     self.deps.push(Vec::new());
                     // dummy EqKind::Input
                     self.equations
@@ -423,7 +479,7 @@ impl Context {
 
                     let mut args = Vec::with_capacity(arguments.len());
                     for expr in arguments {
-                        let e = self.normalize_expr(expr, eq, depends);
+                        let e = self.normalize_expr(expr, i, depends);
                         args.push(e);
                     }
 
@@ -489,7 +545,6 @@ impl Context {
         } else if visited[idx].0 == 2 {
             return Ok(());
         }
-        self.order.push(idx);
 
         visited[idx] = (1, parent);
         for j in 0..self.deps[idx].len() {
@@ -497,12 +552,30 @@ impl Context {
         }
         visited[idx].0 = 2;
 
+        self.order.push(idx);
+
         Ok(())
     }
 }
 
-fn permut(v: &mut Vec<Equation>, permutations: Vec<usize>) {
+/// permut v according to permutations, and change the SIdent in the expressions
+/// contained in v
+/// SAFETY: the mapping i -> permutations[i] should be a permutation of [0, v.len()]
+unsafe fn permut(v: &mut Vec<Equation>, mut permutations: Vec<usize>) {
     assert_eq!(v.len(), permutations.len());
+
+    for eq in v.iter_mut() {
+        eq.types.permut(&mut permutations);
+        match &mut eq.kind {
+            EqKind::CellExpr(e, _) | EqKind::Expr(e) => e.permut(&mut permutations),
+            EqKind::NodeCall { args, .. } => {
+                for arg in args {
+                    arg.permut(&mut permutations);
+                }
+            }
+            EqKind::Input => (),
+        }
+    }
 
     let mut src = std::mem::replace(v, Vec::with_capacity(v.len()));
 
@@ -540,7 +613,9 @@ impl Node {
         let ret_types = Types::from(ret_types, &mut context.store);
 
         let mut equations = context.equations.into_iter().map(|eq| eq.0).collect();
-        permut(&mut equations, context.order);
+        unsafe {
+            permut(&mut equations, context.order);
+        }
 
         Ok(Node {
             name,

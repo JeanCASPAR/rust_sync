@@ -3,11 +3,11 @@ use rust_sync::sync;
 sync! {
     #![pass(2)]
 
-    node oui() = ()
+    node oui(a:bool) = (b)
     where
-        () = non();
+        b : bool = non(a);
 
-    node non() = ();
+    node non(c : bool) = (c);
 }
 
 fn main() {}

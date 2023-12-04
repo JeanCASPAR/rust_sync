@@ -1,4 +1,7 @@
+#![deny(missing_debug_implementations)]
+
 use proc_macro_error::proc_macro_error;
+use quote::quote;
 use syn::parse_macro_input;
 
 extern crate proc_macro;
@@ -26,10 +29,10 @@ pub fn sync(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         return proc_macro::TokenStream::new();
     }
 
-    let _scheduled_nodes;
+    let scheduled_nodes;
     if pass > 0 {
         pass -= 1;
-        _scheduled_nodes = match scheduler::Ast::try_from(typed_nodes) {
+        scheduled_nodes = match scheduler::Ast::try_from(typed_nodes) {
             Ok(x) => x,
             Err(err) => err.raise(),
         };
@@ -37,9 +40,26 @@ pub fn sync(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         return proc_macro::TokenStream::new();
     }
 
+    let codegen = if pass > 0 {
+        pass -= 1;
+        quote! {
+            #scheduled_nodes
+        }
+    } else {
+        proc_macro2::TokenStream::new()
+    };
+
+    // let s = codegen.to_string();
+    // if let Ok(file) = syn::parse_file(&s) {
+    //     println!("{}", prettyplease::unparse(&file));
+    // } else {
+    //     println!("pretty print failed");
+    //     println!("{}", s);
+    // }
+
     if pass != 0 {
         // Ok...
     }
 
-    proc_macro::TokenStream::new()
+    codegen.into()
 }
