@@ -1,7 +1,7 @@
 use patricia_tree::StringPatriciaMap;
 use proc_macro2::Span;
 use smallvec::smallvec as types;
-use syn::Ident;
+use syn::{Ident, Visibility};
 
 use crate::{
     error::Error,
@@ -37,6 +37,7 @@ impl TryFrom<Module> for Ast {
 
 #[derive(Debug)]
 pub struct Node {
+    pub vis: Visibility,
     pub name: Ident,
     pub params: NodeParams,
     pub ret: Vec<(Ident, Type)>,
@@ -68,6 +69,7 @@ impl Node {
             }
         }
         Ok(Self {
+            vis: node.vis,
             params: node.params,
             ret: node
                 .ret

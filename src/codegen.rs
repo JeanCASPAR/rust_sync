@@ -320,9 +320,10 @@ impl ToTokens for Node {
         let input_types = &self.params;
         let ret_types = &self.ret_types;
         let ret = &self.ret_vars;
+        let vis = &self.vis;
 
         let ts = quote! {
-            pub struct #name {
+            #vis struct #name {
                 counter: usize,
                 #fields_decl
             }
@@ -360,7 +361,9 @@ impl ToTokens for Ast {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let nodes = &self.nodes;
         let ts = quote! {
-            #(#nodes)*
+            pub mod sync {
+                #(#nodes)*
+            }
         };
         tokens.extend(ts);
     }

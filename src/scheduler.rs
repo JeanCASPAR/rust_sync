@@ -1,7 +1,7 @@
 use patricia_tree::StringPatriciaMap;
 use proc_macro2::Span;
 use smallvec::SmallVec;
-use syn::Ident;
+use syn::{Ident, Visibility};
 
 use crate::{
     error::Error,
@@ -160,6 +160,7 @@ impl TryFrom<TAst> for Ast {
 
 #[derive(Debug)]
 pub struct Node {
+    pub vis: Visibility,
     pub name: Ident,
     pub params: Types,
     pub ret_vars: Vec<SIdent>,
@@ -598,6 +599,7 @@ unsafe fn permut(v: &mut Vec<Equation>, mut permutations: Vec<usize>) {
 impl Node {
     fn schedule(node: TNode, node_deps: &mut StringPatriciaMap<Vec<Ident>>) -> Result<Self, Error> {
         let name = node.name.clone();
+        let vis = node.vis.clone();
         let ret = node.ret.clone();
 
         let mut context = Context::new();
@@ -618,6 +620,7 @@ impl Node {
         }
 
         Ok(Node {
+            vis,
             name,
             params,
             ret_vars,
