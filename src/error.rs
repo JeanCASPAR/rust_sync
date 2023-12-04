@@ -87,6 +87,16 @@ impl Error {
         Self::new(ErrorKind::NoTuples { types }, span)
     }
 
+    pub fn argument_type_mismatch(span: Span, expected_type: Type, found_type: Type) -> Self {
+        Self::new(
+            ErrorKind::ArgumentTypeMismatch {
+                expected_type,
+                found_type,
+            },
+            span,
+        )
+    }
+
     pub fn merge_branch_on_base_clock(
         span: Span,
         true_branch: bool,
@@ -157,6 +167,22 @@ impl Error {
                 clock,
                 found_type,
                 decl_span,
+            },
+            span,
+        )
+    }
+
+    pub fn wrong_number_of_arguments(
+        span: Span,
+        node: String,
+        expected: usize,
+        found: usize,
+    ) -> Self {
+        Self::new(
+            ErrorKind::WrongNumberOfArgument {
+                expected,
+                found,
+                node,
             },
             span,
         )
@@ -296,6 +322,28 @@ impl Error {
                 clock,
                 found_type
             ),
+            ErrorKind::ArgumentTypeMismatch {
+                expected_type,
+                found_type,
+            } => abort!(
+                self.span,
+                "type error: this argument should have type `{}`, but it has type `{}`",
+                expected_type,
+                found_type,
+            ),
+            ErrorKind::WrongNumberOfArgument {
+                expected,
+                found,
+                node,
+            } => abort!(
+                self.span,
+                "node `{}` takes {} argument{}, but {} {} provided",
+                node,
+                expected,
+                if expected == 1 { "" } else { "s" },
+                found,
+                if found == 1 { "was" } else { "were" },
+            ),
         }
     }
 }
@@ -357,5 +405,14 @@ pub enum ErrorKind {
         clock: String,
         found_type: BaseType,
         decl_span: Span,
+    },
+    ArgumentTypeMismatch {
+        expected_type: Type,
+        found_type: Type,
+    },
+    WrongNumberOfArgument {
+        expected: usize,
+        found: usize,
+        node: String,
     },
 }
