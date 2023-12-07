@@ -1,5 +1,5 @@
 error: type error: this argument should have type `int`, but it has type `bool`
- --> tests/typing/fail/signature-mismatch-01.rs:8:23
-  |
-8 |         o : int = oui(b);
-  |                       ^
+  --> tests/typing/fail/signature-mismatch-01.rs:10:23
+   |
+10 |         o : int = oui(b);
+   |                       ^
