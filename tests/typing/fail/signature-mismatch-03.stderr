@@ -1,0 +1,5 @@
+error: node `oui` takes 0 arguments, but 1 was provided
+  --> tests/typing/fail/signature-mismatch-03.rs:12:19
+   |
+12 |         o : int = oui(b);
+   |                   ^^^^^^

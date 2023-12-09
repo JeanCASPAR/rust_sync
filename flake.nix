@@ -1,5 +1,5 @@
 {
-  description = "sync";
+  description = "Rustre";
   inputs = {
     nixpkgs.url = github:NixOS/nixpkgs/nixpkgs-unstable;
     utils.url = github:numtide/flake-utils;
@@ -31,7 +31,7 @@
         };
       in {
         defaultPackage = naerskLib.buildPackage {
-          pname = "!NAME!";
+          pname = "Rustre";
           root = ./.;
         };
         defaultApp = utils.lib.mkApp {

@@ -512,9 +512,41 @@ impl Expr {
                 let f_symb = f.to_string();
                 let typed_args = args
                     .into_iter()
-                    .map(|arg| Self::do_stuff(arg, context, node_types, first_index, None))
-                    .collect::<Result<_, _>>()?;
+                    .map(|arg| {
+                        Ok({
+                            let arg_span = arg.span;
+                            (
+                                Self::do_stuff(arg, context, node_types, first_index, None)?,
+                                arg_span,
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 let (ty, extern_symbol) = if let Some(node_type) = node_types.get(&f_symb) {
+                    if typed_args.len() != node_type.arg_types.len() {
+                        return Err(Error::wrong_number_of_arguments(
+                            span,
+                            f_symb,
+                            node_type.arg_types.len(),
+                            typed_args.len(),
+                        ));
+                    }
+
+                    if let Some(((expr, expr_span), typ)) = typed_args
+                        .iter()
+                        .zip(node_type.arg_types.iter())
+                        .find(|&((found_expr, _), expected_type)| {
+                            found_expr.types.len() != 1 || found_expr.types[0] != *expected_type
+                        })
+                    {
+                        let expr_type = expr.types.singleton(*expr_span)?;
+                        return Err(Error::argument_type_mismatch(
+                            *expr_span,
+                            typ.clone(),
+                            expr_type.clone(),
+                        ));
+                    }
+
                     (node_type.ret_types.clone(), false)
                 } else if let Some(ty) = toplevel_type {
                     (ty, true)
@@ -526,7 +558,7 @@ impl Expr {
                     types: ty,
                     kind: ExprKind::FunCall {
                         function: f,
-                        arguments: typed_args,
+                        arguments: typed_args.into_iter().map(|(x, _)| x).collect(),
                         extern_symbol,
                     },
                     span,
