@@ -90,13 +90,20 @@ impl ToTokens for CompOp {
 
 impl ToTokens for SIdent {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let Self(i, j) = self;
-        let var = format_ident!("var_{}", i);
-        let j = syn::Index::from(*j);
+        let var = format_ident!("var_{}", self.eq);
+        let j = syn::Index::from(self.idx);
 
+        let maybe_uninit = quote! {
+            (*#var.as_mut_ptr())
+        };
+        let value = if self.wait {
+            quote! { #maybe_uninit.join() }
+        } else {
+            maybe_uninit
+        };
         let ts = quote! {
             unsafe {
-                (*#var.as_ptr()).#j
+                #value.#j
             }
         };
 
@@ -115,18 +122,18 @@ impl ToTokens for Expr {
                 let cell = format_ident!("cell_{}", i);
                 quote! {
                     unsafe {
-                        (*self.#cell.as_ptr()).0 // pre cells are always of size 1
+                        (*#cell.as_ptr()).0 // pre cells are always of size 1
                     }
                 }
             }
             ExprKind::Then(e1, e2) => {
                 quote! {
-                    if self.counter == 0 {
+                    if *counter == 0 {
                         #e1
                     } else {
-                        self.counter -= 1;
+                        *counter -= 1;
                         let e = #e2;
-                        self.counter += 1;
+                        *counter += 1;
                         e
                     }
                 }
@@ -247,6 +254,29 @@ impl ToTokens for Node {
             },
         );
 
+        let unpack = {
+            let fields = WrapEquations::new(
+                &self.equations,
+                |eq: &Equation, _, tokens: &mut TokenStream| match eq.kind {
+                    EqKind::Expr(_) | EqKind::Input => (),
+                    EqKind::NodeCall { cell, .. } => {
+                        let field = format_ident!("cell_{}", cell);
+
+                        tokens.extend(quote! { #field, })
+                    }
+                    EqKind::CellExpr(_, cell) => {
+                        let field = format_ident!("cell_{}", cell);
+
+                        tokens.extend(quote! { #field, })
+                    }
+                },
+            );
+
+            quote! {
+                let #name { counter, #fields } = self;
+            }
+        };
+
         let compute = WrapEquations::new(
             &self.equations,
             |eq: &Equation, i, tokens: &mut TokenStream| {
@@ -260,6 +290,9 @@ impl ToTokens for Node {
 
                 let var = format_ident!("var_{}", i);
                 let ty = &eq.types;
+                let mut quoted_ty = quote! { #ty };
+                // force evaluation of the arguments of a call before a thread if launched, if any
+                let mut force_args = quote! {};
                 let ts = match &eq.kind {
                     EqKind::Input => {
                         assert_eq!(i, 0);
@@ -267,16 +300,33 @@ impl ToTokens for Node {
                             input
                         }
                     }
-                    EqKind::NodeCall { args, cell, .. } => {
+                    EqKind::NodeCall {
+                        args, cell, spawn, ..
+                    } => {
                         let node = format_ident!("cell_{}", cell);
-                        if args.len() >= 1 {
+                        let ts = if args.len() >= 1 {
+                            force_args.extend(args.iter().enumerate().map(|(i, e)| {
+                                let id = format_ident!("arg_{}", i);
+                                quote! {
+                                    let #id = #e;
+                                }
+                            }));
+                            let args = (0..args.len())
+                                .into_iter()
+                                .map(|i| format_ident!("arg_{}", i));
                             quote! {
-                                self.#node.step((#(#args),*,))
+                                #node.step((#(#args),*,))
                             }
                         } else {
                             quote! {
-                                self.#node.step(())
+                                #node.step(())
                             }
+                        };
+                        if *spawn {
+                            quoted_ty = quote! { JoinCache<#ty> };
+                            quote! { JoinCache::new(scope.spawn(move || #ts))}
+                        } else {
+                            ts
                         }
                     }
                     EqKind::Expr(e) | EqKind::CellExpr(e, _) => {
@@ -290,7 +340,8 @@ impl ToTokens for Node {
                     }
                 };
                 tokens.extend(quote! {
-                    let #var: ::std::mem::MaybeUninit<#ty> = if #is_active {
+                    let mut #var: ::std::mem::MaybeUninit<#quoted_ty> = if #is_active {
+                        #force_args
                         ::std::mem::MaybeUninit::new(#ts)
                     } else {
                         ::std::mem::MaybeUninit::uninit()
@@ -308,7 +359,7 @@ impl ToTokens for Node {
 
                     let ts = quote! {
                         unsafe {
-                            self.#cell.as_mut_ptr().copy_from_nonoverlapping(#var.as_ptr(), 1);
+                            #cell.as_mut_ptr().copy_from_nonoverlapping(#var.as_ptr(), 1);
                         }
                     };
                     tokens.extend(ts);
@@ -342,13 +393,17 @@ impl ToTokens for Node {
                 }
 
                 pub fn step(&mut self, input: #input_types) -> #ret_types {
-                    #compute
+                    #unpack
 
-                    self.counter += 1;
+                    ::std::thread::scope(|scope| {
+                        #compute
 
-                    #save_cells
+                        *counter += 1;
 
-                    (#(#ret,)*)
+                        #save_cells
+
+                        (#(#ret,)*)
+                    })
                 }
             }
         };
@@ -362,6 +417,30 @@ impl ToTokens for Ast {
         let nodes = &self.nodes;
         let ts = quote! {
             pub mod sync {
+                enum JoinCache<'scope, T> {
+                    Wait(::std::option::Option<::std::thread::ScopedJoinHandle<'scope, T>>),
+                    Finished(T),
+                }
+
+                impl<'scope, T> JoinCache<'scope, T> {
+                    fn new(handle: ::std::thread::ScopedJoinHandle<'scope, T>) -> Self {
+                        Self::Wait(Some(handle))
+                    }
+                }
+
+                impl<'scope, T: Clone> JoinCache<'scope, T> {
+                    fn join(&mut self) -> T {
+                        match self {
+                            Self::Wait(opt) => {
+                                let t = opt.take().unwrap().join().unwrap(); // TODO: the last unwrap can panic
+                                *self = Self::Finished(t.clone());
+                                t
+                            }
+                            Self::Finished(t) => t.clone()
+                        }
+                    }
+                }
+
                 #(#nodes)*
             }
         };

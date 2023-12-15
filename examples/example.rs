@@ -13,7 +13,7 @@ sync! {
     #[export]
     node oui(c : bool) = (b)
     where
-        b : float = 0.0 -> pre non(c);
+        b : float = 0.0 -> pre spawn non(c);
 }
 
 fn main() {

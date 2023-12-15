@@ -508,7 +508,7 @@ impl Expr {
                     span,
                 }
             }
-            PExpr::FunCall(f, args) => {
+            PExpr::FunCall(f, args, spawn) => {
                 let f_symb = f.to_string();
                 let typed_args = args
                     .into_iter()
@@ -551,8 +551,12 @@ impl Expr {
                 } else if let Some(ty) = toplevel_type {
                     (ty, true)
                 } else {
-                    return Err(Error::external_symbol_not_toplevel(f.span(), f.to_string()));
+                    return Err(Error::external_symbol_not_toplevel(f.span(), f_symb));
                 };
+
+                if extern_symbol && spawn {
+                    return Err(Error::spawn_extern_func(f.span(), f_symb));
+                }
 
                 Self {
                     types: ty,
@@ -560,6 +564,7 @@ impl Expr {
                         function: f,
                         arguments: typed_args.into_iter().map(|(x, _)| x).collect(),
                         extern_symbol,
+                        spawn,
                     },
                     span,
                 }
@@ -647,8 +652,10 @@ pub enum ExprKind {
     When(Box<Expr>, Ident),
     WhenNot(Box<Expr>, Ident),
     Merge(Ident, Box<Expr>, Box<Expr>),
+    /// a spawned funcall cannot be extern
     FunCall {
         extern_symbol: bool,
+        spawn: bool,
         function: Ident,
         arguments: Vec<Expr>,
     },

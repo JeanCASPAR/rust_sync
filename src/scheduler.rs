@@ -10,7 +10,17 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy)]
-pub struct SIdent(pub usize, pub usize);
+pub struct SIdent {
+    pub eq: usize,
+    pub idx: usize,
+    pub wait: bool,
+}
+
+impl SIdent {
+    pub fn new(eq: usize, idx: usize, wait: bool) -> Self {
+        Self { eq, idx, wait }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ClockType {
@@ -55,7 +65,7 @@ impl Types {
 
     fn permut(&mut self, permutations: &mut [usize]) {
         for clock in &mut self.clocks {
-            clock.clock.0 = permutations[clock.clock.0];
+            clock.clock.idx = permutations[clock.clock.idx];
         }
     }
 }
@@ -175,6 +185,7 @@ pub enum EqKind {
         ident: Ident,
         args: Vec<Expr>,
         cell: usize,
+        spawn: bool,
     },
     Expr(Expr),
     /// expression that is saved in a memory cell
@@ -215,7 +226,7 @@ impl Expr {
     fn permut(&mut self, permutations: &mut [usize]) {
         self.ty.permut(permutations);
         match &mut self.kind {
-            ExprKind::Var(id) => id.0 = permutations[id.0],
+            ExprKind::Var(id) => id.eq = permutations[id.eq],
             ExprKind::Then(e1, e2) => {
                 e1.permut(permutations);
                 e2.permut(permutations);
@@ -252,7 +263,7 @@ impl Expr {
             }
             ExprKind::Tuple(tuple) => {
                 for id in tuple {
-                    id.0 = permutations[id.0];
+                    id.eq = permutations[id.eq];
                 }
             }
         }
@@ -305,7 +316,8 @@ impl Context {
         for (i, param) in node.params.0.iter().enumerate() {
             // we suppose that input types do not have a clock
             self.equations[0].0.types.inner.push(param.ty.base.clone());
-            self.store.insert(param.id.to_string(), SIdent(0, i));
+            self.store
+                .insert(param.id.to_string(), SIdent::new(0, i, false));
         }
 
         for decl in node.body.iter() {
@@ -321,7 +333,8 @@ impl Context {
             ));
 
             for (j, var) in decl.vars.iter().enumerate() {
-                self.store.insert(var.id.to_string(), SIdent(i, j));
+                self.store
+                    .insert(var.id.to_string(), SIdent::new(i, j, false));
             }
         }
 
@@ -345,9 +358,9 @@ impl Context {
         let ty = Types::from(e.types, &mut self.store);
         let kind = match e.kind {
             TExprKind::Var(id) => {
-                let SIdent(i, j) = self.store.get(id.to_string()).unwrap().clone();
-                add_dep(i);
-                ExprKind::Var(SIdent(i, j))
+                let id = self.store.get(id.to_string()).unwrap().clone();
+                add_dep(id.eq);
+                ExprKind::Var(id)
             }
             TExprKind::Unit => ExprKind::Unit,
             TExprKind::Pre(e) => {
@@ -358,7 +371,7 @@ impl Context {
                     todo!("pre with tuple unimplemented yet")
                 }
 
-                self.store.insert(s.clone(), SIdent(i, 0));
+                self.store.insert(s.clone(), SIdent::new(i, 0, false));
                 self.deps.push(Vec::new());
 
                 self.equations
@@ -420,17 +433,17 @@ impl Context {
             }
             TExprKind::When(e, id) => {
                 let id = self.store.get(id.to_string()).unwrap().clone();
-                add_dep(id.0);
+                add_dep(id.eq);
                 self.normalize_expr(*e, eq, depends).kind
             }
             TExprKind::WhenNot(e, id) => {
                 let id = self.store.get(id.to_string()).unwrap().clone();
-                add_dep(id.0);
+                add_dep(id.eq);
                 self.normalize_expr(*e, eq, depends).kind
             }
             TExprKind::Merge(id, e_when, e_whennot) => {
                 let id = self.store.get(id.to_string()).unwrap().clone();
-                add_dep(id.0);
+                add_dep(id.eq);
                 let e_when = self.normalize_expr(*e_when, eq, depends);
                 let e_whennot = self.normalize_expr(*e_whennot, eq, depends);
 
@@ -448,6 +461,7 @@ impl Context {
             }
             TExprKind::FunCall {
                 extern_symbol,
+                spawn,
                 function,
                 arguments,
             } => {
@@ -469,7 +483,7 @@ impl Context {
                     let i = self.equations.len();
                     let ty = ty.clone();
                     for j in 0..ty.inner.len() {
-                        self.store.insert(s.clone(), SIdent(i, j));
+                        self.store.insert(s.clone(), SIdent::new(i, j, spawn));
                     }
                     add_dep(i);
 
@@ -488,12 +502,13 @@ impl Context {
                         ident: function,
                         args,
                         cell,
+                        spawn,
                     };
 
                     ExprKind::Tuple(
                         (0..ty.inner.len())
                             .into_iter()
-                            .map(|j| SIdent(i, j))
+                            .map(|j| SIdent::new(i, j, spawn))
                             .collect(),
                     )
                 }

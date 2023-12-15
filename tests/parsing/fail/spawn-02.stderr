@@ -1,0 +1,5 @@
+error: expected parentheses
+ --> tests/parsing/fail/spawn-02.rs:8:26
+  |
+8 |         a : int = spawn c;
+  |                          ^

@@ -370,7 +370,8 @@ pub enum Expr {
     Bool(bool, Span),
     /// cast an int to a float
     FloatCast(Box<Spanned<Expr>>),
-    FunCall(Ident, Vec<Spanned<Expr>>),
+    /// boolean : true if spawn
+    FunCall(Ident, Vec<Spanned<Expr>>, bool),
     Unit,
     Merge(Ident, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     When(Box<Spanned<Expr>>, Span, Ident),
@@ -919,7 +920,7 @@ mod expr_internals {
         Float(f64, Span),
         Bool(bool, Span),
         Var(Ident),
-        FunCall(Ident, Vec<Expr0>, Span),
+        FunCall(Ident, Vec<Expr0>, Span, bool),
         Merge(Ident, Box<Expr0>, Box<Expr0>, Span),
     }
 
@@ -994,7 +995,8 @@ mod expr_internals {
                 Ok(Expr10::Bool(b, b_parse.span()))
             } else if lookahead.peek(Ident) {
                 let id = input.parse::<Ident>()?;
-                if input.peek(Paren) {
+                if id.to_string() == "spawn" {
+                    let id = input.parse::<Ident>()?;
                     let content;
                     let span = parenthesized!(content in input).span.close();
                     let args: Vec<Expr0> = content
@@ -1004,7 +1006,18 @@ mod expr_internals {
                             Pair::Punctuated(t, _) | Pair::End(t) => t,
                         })
                         .collect();
-                    Ok(Expr10::FunCall(id, args, span))
+                    Ok(Expr10::FunCall(id, args, span, true))
+                } else if input.peek(Paren) {
+                    let content;
+                    let span = parenthesized!(content in input).span.close();
+                    let args: Vec<Expr0> = content
+                        .parse_terminated(Expr0::parse, Token![,])?
+                        .into_pairs()
+                        .map(|pair| match pair {
+                            Pair::Punctuated(t, _) | Pair::End(t) => t,
+                        })
+                        .collect();
+                    Ok(Expr10::FunCall(id, args, span, false))
                 } else {
                     Ok(Expr10::Var(id))
                 }
@@ -1053,10 +1066,10 @@ mod expr_internals {
                         span,
                     }
                 }
-                Self::FunCall(id, args, sp) => {
+                Self::FunCall(id, args, sp, spawn) => {
                     let span = id.span().join(sp).unwrap();
                     Spanned {
-                        inner: Expr::FunCall(id, args.into_iter().map(Into::into).collect()),
+                        inner: Expr::FunCall(id, args.into_iter().map(Into::into).collect(), spawn),
                         span,
                     }
                 }

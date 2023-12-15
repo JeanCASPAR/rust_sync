@@ -39,6 +39,10 @@ impl Error {
         Self::new(ErrorKind::ExternalSymbolNotToplevel { symbol }, span)
     }
 
+    pub fn spawn_extern_func(span: Span, symbol: String) -> Self {
+        Self::new(ErrorKind::SpawnExternFunc { symbol }, span)
+    }
+
     pub fn types_mismatch(span: Span, left_types: Types, right_types: Types) -> Self {
         Self::new(
             ErrorKind::TypesMismatch {
@@ -263,6 +267,12 @@ impl Error {
                 "Rust function call expressions should be assigned to a variable right away";
                 help = "`{}` is an external Rust symbol", symbol
             ),
+            ErrorKind::SpawnExternFunc { symbol } => abort!(
+                self.span,
+                "Cannot spawn a function call to Rust function {} in a thread",
+                symbol;
+                help = "wrap this call in a node"
+            ),
             ErrorKind::NoTuples { types } => abort!(
                 self.span,
                 "tuples don't exist: {} is not a valid type...",
@@ -401,6 +411,9 @@ pub enum ErrorKind {
     },
     NonBoolCond,
     ExternalSymbolNotToplevel {
+        symbol: String,
+    },
+    SpawnExternFunc {
         symbol: String,
     },
     NoTuples {
