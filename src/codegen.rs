@@ -78,11 +78,11 @@ impl ToTokens for CompOp {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let ts = match self {
             CompOp::Ge => quote! {>=},
-            CompOp::Gt => quote! {>=},
-            CompOp::Le => quote! {>=},
-            CompOp::Lt => quote! {>=},
-            CompOp::Eq => quote! {>=},
-            CompOp::NEq => quote! {>=},
+            CompOp::Gt => quote! {>},
+            CompOp::Le => quote! {<=},
+            CompOp::Lt => quote! {>},
+            CompOp::Eq => quote! {==},
+            CompOp::NEq => quote! {!=},
         };
         tokens.extend(ts);
     }
