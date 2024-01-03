@@ -1227,11 +1227,9 @@ impl Parse for Node {
             if id.to_string() == "export" {
                 match export {
                     None => export = Some((i, attr.span())),
-                    Some((_, span)) => {
+                    Some((_, _)) => {
                         return Err(input.error(format!(
-                            "Multiple #[export] attribute found at {:?} and {:?}",
-                            span,
-                            attr.span()
+                            "Multiple #[export] attributes"
                         )))
                     }
                 }
