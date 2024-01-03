@@ -378,7 +378,7 @@ impl ToTokens for Node {
         let vis = &self.vis;
 
         let ts = quote! {
-            pub(in super) fn #name<
+            #vis fn #name<
                 T: ::std::iter::Iterator<Item = #input_types>
                 >(iterator: T) -> #iterator_name<T> {
                 #iterator_name { iterator, node: #node_name::new() }
@@ -391,12 +391,12 @@ impl ToTokens for Node {
                 }
             }
 
-            pub struct #iterator_name<T> {
+            #vis struct #iterator_name<T> {
                 iterator: T,
                 node: #node_name
             }
             
-            #vis struct #node_name {
+            struct #node_name {
                 counter: usize,
                 #fields_decl
             }

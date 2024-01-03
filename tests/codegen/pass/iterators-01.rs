@@ -2,7 +2,8 @@ use rustre::sync;
 
 sync! {
     #![pass(3)]
-    
+
+    #[export]
     node oui(c1 : bool, c2 : bool) = (a)
     where
         c1on2 : bool on c2 = c1 when c2,

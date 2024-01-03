@@ -2,7 +2,8 @@ use rustre::sync;
 
 sync! {
     #![pass(3)]
-    
+
+    #[export]
     node oui(c: bool) = (b)
     where
         b : int = merge c {
