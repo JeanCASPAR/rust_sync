@@ -1,4 +1,4 @@
-use rust_sync::sync;
+use rustre::sync;
 
 sync! {
     #![pass(3)]
