@@ -227,23 +227,15 @@ impl Expr {
         self.ty.permut(permutations);
         match &mut self.kind {
             ExprKind::Var(id) => id.eq = permutations[id.eq],
-            ExprKind::Then(e1, e2) => {
+            ExprKind::Then(e1, e2)
+            | ExprKind::MathBinOp(e1, _, e2)
+            | ExprKind::BoolBinOp(e1, _, e2)
+            | ExprKind::CompOp(e1, _, e2) => {
                 e1.permut(permutations);
                 e2.permut(permutations);
             }
-            ExprKind::Minus(e) => e.permut(permutations),
-            ExprKind::Not(e) => e.permut(permutations),
-            ExprKind::MathBinOp(e1, _, e2) => {
-                e1.permut(permutations);
-                e2.permut(permutations);
-            }
-            ExprKind::BoolBinOp(e1, _, e2) => {
-                e1.permut(permutations);
-                e2.permut(permutations);
-            }
-            ExprKind::CompOp(e1, _, e2) => {
-                e1.permut(permutations);
-                e2.permut(permutations);
+            ExprKind::Minus(e) | ExprKind::Not(e) | ExprKind::FloatCast(e) => {
+                e.permut(permutations)
             }
             ExprKind::If(cond, e_then, e_else) => {
                 cond.permut(permutations);
@@ -255,7 +247,6 @@ impl Expr {
             | ExprKind::Int(_)
             | ExprKind::Float(_)
             | ExprKind::Bool(_) => (),
-            ExprKind::FloatCast(e) => e.permut(permutations),
             ExprKind::FunCall { arguments, .. } => {
                 for arg in arguments {
                     arg.permut(permutations);
