@@ -1263,22 +1263,21 @@ impl Parse for Node {
 
 #[derive(Debug)]
 pub struct Module {
-    // TODO: remove when dev is finished
+    /// for debugging purpose only
     pub pass: u32,
     pub nodes: Vec<Node>,
 }
 
 impl Parse for Module {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        // TODO: remove when dev is finished
         let mut attrs = input.call(Attribute::parse_inner)?;
         if attrs.len() > 1 {
-            panic!("Max une seule passe")
+            panic!("You can only specify one pass")
         }
 
         let pass = if let Some(attr) = attrs.pop() {
             let Meta::List(meta) = attr.meta else {
-                panic!("Tu sais pas écrire")
+                panic!("Unknown meta attribute")
             };
             let id = meta.path.require_ident()?;
             assert_eq!(id.to_string(), "pass");

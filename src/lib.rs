@@ -49,8 +49,10 @@ pub fn sync(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         proc_macro2::TokenStream::new()
     };
 
+    /* DEBUG
     let s = codegen.to_string();
     let res = syn::parse_file(&s);
+
     if let Ok(file) = &res {
         println!("{}", prettyplease::unparse(&file));
     } else {
@@ -58,6 +60,7 @@ pub fn sync(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         println!("{}", s);
         res.unwrap();
     }
+    */
 
     if pass != 0 {
         // Ok...
