@@ -1,7 +1,7 @@
 use rust_sync::sync;
 
-fn f(x: f64) -> f64 {
-    x * 2.
+fn g(x: f64) -> i64 {
+    x as i64 * 2
 }
 
 sync! {
@@ -18,16 +18,18 @@ sync! {
     node oui(c : bool) = (d)
     where
         b : float = 0.0 -> pre spawn non(c),
-        d : float = f(b);
+        d : int = f(b);
 }
 
 fn main() {
     let mut oui = sync::Nodeoui::new();
+    let mut v = Vec::with_capacity(10);
     for b in [true, false, true, false, true] {
-        println!("{}", oui.step((b,)).0);
+        v.push(oui.step((b,)).0);
     }
     oui.reset();
     for b in [false, true, false, true, true] {
-        println!("{}", oui.step((b,)).0);
+        v.push(oui.step((b,)).0);
     }
+    assert_eq!(v, [0, 6, 4, 6, 4, 0, 4, 6, 4, 6]);
 }

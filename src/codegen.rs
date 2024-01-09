@@ -169,6 +169,8 @@ impl ToTokens for Expr {
                 function,
                 arguments,
             } => {
+                // mangling of extern function
+                let function = format_ident!("extern_{}", function);
                 let args = arguments.iter();
                 quote! {
                     #function (#(#args),*)
@@ -415,8 +417,23 @@ impl ToTokens for Node {
 impl ToTokens for Ast {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let nodes = &self.nodes;
+        let imports = if self.extern_functions.is_empty() {
+            quote! {}
+        } else {
+            let imports = self.extern_functions.iter().map(|id| {
+                let extern_id = format_ident!("extern_{}", id);
+                quote! {
+                    #id as #extern_id
+                }
+            });
+            quote! {
+                use super::{#(#imports),*};
+            }
+        };
         let ts = quote! {
             pub mod sync {
+                #imports
+
                 enum JoinCache<'scope, T> {
                     Wait(::std::option::Option<::std::thread::ScopedJoinHandle<'scope, T>>),
                     Finished(T),

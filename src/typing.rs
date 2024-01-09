@@ -14,6 +14,7 @@ use crate::{
 #[derive(Debug)]
 pub struct Ast {
     pub nodes: Vec<Node>,
+    pub extern_functions: Vec<Ident>,
 }
 
 type Map<T> = StringPatriciaMap<T>;
@@ -22,15 +23,22 @@ impl TryFrom<Module> for Ast {
     type Error = Error;
     fn try_from(module: Module) -> Result<Self, Self::Error> {
         let mut node_types = Map::new();
+        let mut extern_functions = Vec::new();
         for node in module.nodes.iter() {
             node_types.insert(node.name.to_string(), node.return_types()?);
         }
+        let nodes = module
+            .nodes
+            .into_iter()
+            .map(|node| Node::from_untyped(node, &node_types, &mut extern_functions))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        extern_functions.sort_unstable();
+        extern_functions.dedup();
+
         Ok(Self {
-            nodes: module
-                .nodes
-                .into_iter()
-                .map(|node| Node::from_untyped(node, &node_types))
-                .collect::<Result<Vec<_>, _>>()?,
+            nodes,
+            extern_functions,
         })
     }
 }
@@ -45,7 +53,11 @@ pub struct Node {
 }
 
 impl Node {
-    fn from_untyped(node: PNode, node_types: &Map<NodeType>) -> Result<Self, Error> {
+    fn from_untyped(
+        node: PNode,
+        node_types: &Map<NodeType>,
+        extern_functions: &mut Vec<Ident>,
+    ) -> Result<Self, Error> {
         // Create the context of the node, that is, the type of every declared variable.
         let mut context: Map<(Type, Span)> = Map::new();
         // Register all the variable declarations, starting with formal arguments and then the
@@ -89,7 +101,7 @@ impl Node {
                 .body
                 .0
                 .into_iter()
-                .map(|decl| Decl::from_untyped(decl, &context, node_types))
+                .map(|decl| Decl::from_untyped(decl, &context, node_types, extern_functions))
                 .collect::<Result<_, _>>()?,
         })
     }
@@ -129,6 +141,7 @@ impl Decl {
         decl: PDecl,
         context: &Map<(Type, Span)>,
         node_types: &Map<NodeType>,
+        extern_functions: &mut Vec<Ident>,
     ) -> Result<Self, Error> {
         let decl_span = decl.expr.span;
         let expr = Expr::from_untyped(
@@ -136,6 +149,7 @@ impl Decl {
             context,
             node_types,
             Some(decl.vars.iter().map(|var| var.ty.clone()).collect()),
+            extern_functions,
         )?;
         if let Some((id, expected_type, found_type)) = expr
             .types
@@ -173,8 +187,16 @@ impl Expr {
         context: &Map<(Type, Span)>,
         node_types: &Map<NodeType>,
         toplevel_types: Option<Types>,
+        extern_functions: &mut Vec<Ident>,
     ) -> Result<Self, Error> {
-        Self::do_stuff(expr, context, node_types, 0, toplevel_types)
+        Self::do_stuff(
+            expr,
+            context,
+            node_types,
+            0,
+            toplevel_types,
+            extern_functions,
+        )
     }
 
     fn do_stuff(
@@ -183,6 +205,7 @@ impl Expr {
         node_types: &Map<NodeType>,
         first_index: u16,
         toplevel_type: Option<Types>,
+        extern_functions: &mut Vec<Ident>,
     ) -> Result<Self, Error> {
         let span = spanned_expr.span;
         Ok(match spanned_expr.inner {
@@ -208,7 +231,14 @@ impl Expr {
                 if first_index == 0 {
                     return Err(Error::negative_first_index(span));
                 }
-                let typed_e = Self::do_stuff(*e, context, node_types, first_index - 1, None)?;
+                let typed_e = Self::do_stuff(
+                    *e,
+                    context,
+                    node_types,
+                    first_index - 1,
+                    None,
+                    extern_functions,
+                )?;
                 Self {
                     types: typed_e.types.clone(),
                     kind: ExprKind::Pre(Box::new(typed_e)),
@@ -216,8 +246,22 @@ impl Expr {
                 }
             }
             PExpr::Then(head, _, tail) => {
-                let head_expr = Self::do_stuff(*head, context, node_types, first_index, None)?;
-                let tail_expr = Self::do_stuff(*tail, context, node_types, first_index + 1, None)?;
+                let head_expr = Self::do_stuff(
+                    *head,
+                    context,
+                    node_types,
+                    first_index,
+                    None,
+                    extern_functions,
+                )?;
+                let tail_expr = Self::do_stuff(
+                    *tail,
+                    context,
+                    node_types,
+                    first_index + 1,
+                    None,
+                    extern_functions,
+                )?;
                 if head_expr.types != tail_expr.types {
                     return Err(Error::then_type_mismatch(
                         span,
@@ -234,7 +278,8 @@ impl Expr {
             }
             PExpr::Minus(_, e) => {
                 let e_span = e.span;
-                let typed_e = Self::do_stuff(*e, context, node_types, first_index, None)?;
+                let typed_e =
+                    Self::do_stuff(*e, context, node_types, first_index, None, extern_functions)?;
                 let e_type = typed_e.types.singleton(e_span)?;
                 if e_type.base == BaseType::Bool {
                     return Err(Error::bool_arithmetic(span));
@@ -247,7 +292,8 @@ impl Expr {
             }
             PExpr::Not(_, e) => {
                 let e_span = e.span;
-                let typed_e = Self::do_stuff(*e, context, node_types, first_index, None)?;
+                let typed_e =
+                    Self::do_stuff(*e, context, node_types, first_index, None, extern_functions)?;
                 let e_type = typed_e.types.singleton(e_span)?;
                 if e_type.base != BaseType::Bool {
                     return Err(Error::number_logic(span));
@@ -261,9 +307,23 @@ impl Expr {
             PExpr::MathBinOp(left, op, _, right) => {
                 let left_span = left.span;
                 let right_span = right.span;
-                let typed_left = Self::do_stuff(*left, context, node_types, first_index, None)?;
+                let typed_left = Self::do_stuff(
+                    *left,
+                    context,
+                    node_types,
+                    first_index,
+                    None,
+                    extern_functions,
+                )?;
                 let left_type = typed_left.types.singleton(left_span)?;
-                let typed_right = Self::do_stuff(*right, context, node_types, first_index, None)?;
+                let typed_right = Self::do_stuff(
+                    *right,
+                    context,
+                    node_types,
+                    first_index,
+                    None,
+                    extern_functions,
+                )?;
                 let right_type = typed_right.types.singleton(right_span)?;
                 if left_type != right_type {
                     return Err(Error::type_mismatch(
@@ -284,15 +344,34 @@ impl Expr {
             }
             PExpr::If(cond, then_branch, else_branch) => {
                 let then_branch_span = then_branch.span;
-                let typed_then =
-                    Self::do_stuff(*then_branch, context, node_types, first_index, None)?;
+                let typed_then = Self::do_stuff(
+                    *then_branch,
+                    context,
+                    node_types,
+                    first_index,
+                    None,
+                    extern_functions,
+                )?;
                 let then_type = typed_then.types.singleton(then_branch_span)?;
                 let else_branch_span = else_branch.span;
-                let typed_else =
-                    Self::do_stuff(*else_branch, context, node_types, first_index, None)?;
+                let typed_else = Self::do_stuff(
+                    *else_branch,
+                    context,
+                    node_types,
+                    first_index,
+                    None,
+                    extern_functions,
+                )?;
                 let else_type = typed_else.types.singleton(else_branch_span)?;
                 let cond_span = cond.span;
-                let typed_cond = Self::do_stuff(*cond, context, node_types, first_index, None)?;
+                let typed_cond = Self::do_stuff(
+                    *cond,
+                    context,
+                    node_types,
+                    first_index,
+                    None,
+                    extern_functions,
+                )?;
                 let cond_type = typed_cond.types.singleton(cond_span)?;
                 if then_type != else_type {
                     return Err(Error::type_mismatch(
@@ -331,7 +410,14 @@ impl Expr {
                 span,
             },
             PExpr::FloatCast(casted) => {
-                let typed_casted = Self::do_stuff(*casted, context, node_types, first_index, None)?;
+                let typed_casted = Self::do_stuff(
+                    *casted,
+                    context,
+                    node_types,
+                    first_index,
+                    None,
+                    extern_functions,
+                )?;
                 let clocks = match typed_casted.types.singleton(span)? {
                     Type {
                         base: BaseType::Int64,
@@ -361,7 +447,8 @@ impl Expr {
                         *clock_span,
                     ));
                 }
-                let typed_e = Self::do_stuff(*e, context, node_types, first_index, None)?;
+                let typed_e =
+                    Self::do_stuff(*e, context, node_types, first_index, None, extern_functions)?;
                 let mut types = typed_e.types.clone();
                 for e_type in types.iter_mut() {
                     e_type.clocks.push(ClockType {
@@ -388,7 +475,8 @@ impl Expr {
                         *clock_span,
                     ));
                 }
-                let typed_e = Self::do_stuff(*e, context, node_types, first_index, None)?;
+                let typed_e =
+                    Self::do_stuff(*e, context, node_types, first_index, None, extern_functions)?;
                 let mut types = typed_e.types.clone();
                 for e_type in types.iter_mut() {
                     e_type.clocks.push(ClockType {
@@ -405,10 +493,23 @@ impl Expr {
             PExpr::Merge(clock, e_true, e_false) => {
                 let clock_id = clock.to_string();
                 let e_true_span = e_true.span;
-                let typed_e_true = Self::do_stuff(*e_true, context, node_types, first_index, None)?;
+                let typed_e_true = Self::do_stuff(
+                    *e_true,
+                    context,
+                    node_types,
+                    first_index,
+                    None,
+                    extern_functions,
+                )?;
                 let e_false_span = e_false.span;
-                let typed_e_false =
-                    Self::do_stuff(*e_false, context, node_types, first_index, None)?;
+                let typed_e_false = Self::do_stuff(
+                    *e_false,
+                    context,
+                    node_types,
+                    first_index,
+                    None,
+                    extern_functions,
+                )?;
                 let e_true_type = typed_e_true.types.singleton(e_true_span)?;
                 let e_false_type = typed_e_false.types.singleton(e_false_span)?;
 
@@ -516,7 +617,14 @@ impl Expr {
                         Ok({
                             let arg_span = arg.span;
                             (
-                                Self::do_stuff(arg, context, node_types, first_index, None)?,
+                                Self::do_stuff(
+                                    arg,
+                                    context,
+                                    node_types,
+                                    first_index,
+                                    None,
+                                    extern_functions,
+                                )?,
                                 arg_span,
                             )
                         })
@@ -554,6 +662,10 @@ impl Expr {
                     return Err(Error::external_symbol_not_toplevel(f.span(), f_symb));
                 };
 
+                if extern_symbol {
+                    extern_functions.push(f.clone());
+                }
+
                 if extern_symbol && spawn {
                     return Err(Error::spawn_extern_func(f.span(), f_symb));
                 }
@@ -572,8 +684,22 @@ impl Expr {
             PExpr::BoolBinOp(left, op, _op_span, right) => {
                 let left_span = left.span;
                 let right_span = right.span;
-                let typed_left = Self::do_stuff(*left, context, node_types, first_index, None)?;
-                let typed_right = Self::do_stuff(*right, context, node_types, first_index, None)?;
+                let typed_left = Self::do_stuff(
+                    *left,
+                    context,
+                    node_types,
+                    first_index,
+                    None,
+                    extern_functions,
+                )?;
+                let typed_right = Self::do_stuff(
+                    *right,
+                    context,
+                    node_types,
+                    first_index,
+                    None,
+                    extern_functions,
+                )?;
                 let left_type = typed_left.types.singleton(left_span)?;
                 let right_type = typed_right.types.singleton(right_span)?;
 
@@ -603,8 +729,22 @@ impl Expr {
                 let generic_op = matches!(op, CompOp::Eq | CompOp::NEq);
                 let left_span = left.span;
                 let right_span = right.span;
-                let typed_left = Self::do_stuff(*left, context, node_types, first_index, None)?;
-                let typed_right = Self::do_stuff(*right, context, node_types, first_index, None)?;
+                let typed_left = Self::do_stuff(
+                    *left,
+                    context,
+                    node_types,
+                    first_index,
+                    None,
+                    extern_functions,
+                )?;
+                let typed_right = Self::do_stuff(
+                    *right,
+                    context,
+                    node_types,
+                    first_index,
+                    None,
+                    extern_functions,
+                )?;
                 let left_type = typed_left.types.singleton(left_span)?;
                 let right_type = typed_right.types.singleton(right_span)?;
 

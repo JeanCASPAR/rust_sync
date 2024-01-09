@@ -1,0 +1,13 @@
+error[E0308]: mismatched types
+  --> tests/codegen/fail/extern_function2.rs:7:1
+   |
+7  | / sync! {
+8  | |     #![pass(3)]
+9  | |
+10 | |     node non(c : bool) = (a,)
+...  |
+21 | |         d : int = f(b);
+22 | | }
+   | |_^ expected `i64`, found `f64`
+   |
+   = note: this error originates in the macro `sync` (in Nightly builds, run with -Z macro-backtrace for more info)

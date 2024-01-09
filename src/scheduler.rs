@@ -82,9 +82,11 @@ impl Types {
 #[derive(Debug)]
 pub struct Ast {
     pub nodes: Vec<Node>,
+    pub extern_functions: Vec<Ident>,
 }
 
 impl Ast {
+    /// check if there is a cyclic dependencies between nodes
     /// boolean : true if currently being visited
     fn visit(
         s: String,
@@ -132,6 +134,7 @@ impl Ast {
         Ok(())
     }
 
+    /// check if there is a cyclic dependencies between nodes
     fn assert_no_node_cycle(
         node_deps: StringPatriciaMap<Vec<Ident>>,
         node_idents: StringPatriciaMap<Ident>,
@@ -164,7 +167,10 @@ impl TryFrom<TAst> for Ast {
 
         Self::assert_no_node_cycle(node_deps, node_idents)?;
 
-        Ok(Ast { nodes })
+        Ok(Ast {
+            nodes,
+            extern_functions: ast.extern_functions,
+        })
     }
 }
 
@@ -223,6 +229,7 @@ pub enum ExprKind {
 }
 
 impl Expr {
+    /// permut the variables according to some permutation
     fn permut(&mut self, permutations: &mut [usize]) {
         self.ty.permut(permutations);
         match &mut self.kind {

@@ -1,0 +1,8 @@
+error[E0432]: unresolved import `super::f`
+  --> tests/codegen/fail/extern_function1.rs:21:19
+   |
+21 |         d : int = f(b);
+   |                   ^
+   |                   |
+   |                   no `f` in the root
+   |                   help: a similar name exists in the module: `g`
