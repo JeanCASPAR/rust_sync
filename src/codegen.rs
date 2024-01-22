@@ -34,7 +34,7 @@ struct WrapEquations<'a, F> {
     equations: &'a [Equation],
     function: F,
 }
-impl<'a, F: Fn(&'a Equation, usize, &'_ mut TokenStream)> WrapEquations<'a, F> {
+impl<'a, F> WrapEquations<'a, F> {
     fn new(equations: &'a [Equation], function: F) -> Self {
         Self {
             equations,
@@ -43,7 +43,9 @@ impl<'a, F: Fn(&'a Equation, usize, &'_ mut TokenStream)> WrapEquations<'a, F> {
     }
 }
 
-impl<'a, F: Fn(&'a Equation, usize, &'_ mut TokenStream)> ToTokens for WrapEquations<'a, F> {
+impl<'a, F: for<'b> Fn(&'a Equation, usize, &'b mut TokenStream)> ToTokens
+    for WrapEquations<'a, F>
+{
     fn to_tokens(&self, tokens: &mut TokenStream) {
         for (i, eq) in self.equations.iter().enumerate() {
             (self.function)(eq, i, tokens)
@@ -193,7 +195,9 @@ impl ToTokens for Expr {
 
 impl ToTokens for Node {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let name = format_ident!("Node{}", self.name);
+        let node_name = format_ident!("Node{}", self.name);
+        let iterator_name = format_ident!("Iterator{}", self.name);
+        let name = format_ident!("{}", self.name);
 
         let fields_decl = WrapEquations::new(
             &self.equations,
@@ -275,7 +279,7 @@ impl ToTokens for Node {
             );
 
             quote! {
-                let #name { counter, #fields } = self;
+                let #node_name { counter, #fields } = self;
             }
         };
 
@@ -376,12 +380,30 @@ impl ToTokens for Node {
         let vis = &self.vis;
 
         let ts = quote! {
-            #vis struct #name {
+            #vis fn #name<
+                T: ::std::iter::Iterator<Item = #input_types>
+                >(iterator: T) -> #iterator_name<T> {
+                #iterator_name { iterator, node: #node_name::new() }
+            }
+
+            impl<T: ::std::iter::Iterator<Item = #input_types>> ::std::iter::Iterator for #iterator_name<T> {
+                type Item = #ret_types;
+                fn next(&mut self) -> ::std::option::Option<#ret_types> {
+                    Some(self.node.step(self.iterator.next()?))
+                }
+            }
+
+            #vis struct #iterator_name<T> {
+                iterator: T,
+                node: #node_name
+            }
+            
+            struct #node_name {
                 counter: usize,
                 #fields_decl
             }
 
-            impl #name {
+            impl #node_name {
                 pub fn new() -> Self {
                     Self {
                         counter: 0,

@@ -1,5 +1,9 @@
 use rustre::sync;
 
+fn f(x: f64) -> f64 {
+    x * 2.
+}
+
 sync! {
     #![pass(3)]
 
@@ -11,9 +15,10 @@ sync! {
         };
 
     #[export]
-    node oui(c : bool) = (b)
+    node oui(c : bool) = (d)
     where
-        b : float = 0.0 -> pre spawn non(c);
+        b : float = 0.0 -> pre spawn non(c),
+        d : float = f(b);
 }
 
 fn main() {
@@ -21,6 +26,6 @@ fn main() {
         sync::oui([true, false, true, false, true].into_iter().map(|x| (x,)))
             .map(|(d,)| d)
             .collect::<Vec<_>>(),
-        [0., 3., 2., 3., 2.],
-    );
+        [0.0, 6.0, 4.0, 6.0, 4.0],
+    )
 }

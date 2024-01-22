@@ -3,9 +3,9 @@ use rustre::sync;
 sync! {
     #![pass(0)]
 
-    node oui() = ()
-    where
-        () = ();
+    #[export]
+    #[export]
+    node oui() = ();
 }
 
 fn main() {}

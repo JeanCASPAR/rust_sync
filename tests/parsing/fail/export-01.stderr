@@ -1,0 +1,5 @@
+error: Multiple #[export] attributes
+ --> tests/parsing/fail/export-01.rs:8:5
+  |
+8 |     node oui() = ();
+  |     ^^^^

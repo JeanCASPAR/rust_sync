@@ -1,9 +1,10 @@
 use rustre::sync;
 
 sync! {
-    #![pass(1)]
+    #![pass(3)]
 
-    node oui(c1 : bool, c2 : bool) = ()
+    #[export]
+    node oui(c1 : bool, c2 : bool) = (a)
     where
         c1on2 : bool on c2 = c1 when c2,
         a : float = merge c2 {

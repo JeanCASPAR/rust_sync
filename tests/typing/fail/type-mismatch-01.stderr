@@ -1,5 +1,5 @@
 error: type mismatch: left has type `int`, right has type `float`
- --> tests/typing/fail/type-mismatch-01.rs:8:9
+ --> tests/typing/fail/type-mismatch-01.rs:8:19
   |
 8 |         o : int = 3.0;
-  |         ^
+  |                   ^^^

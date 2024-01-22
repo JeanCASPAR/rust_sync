@@ -12,6 +12,8 @@ mod parser;
 mod scheduler;
 mod typing;
 
+const DEBUG_PRINT: bool = false;
+
 #[proc_macro_error]
 #[proc_macro]
 pub fn sync(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -49,18 +51,17 @@ pub fn sync(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         proc_macro2::TokenStream::new()
     };
 
-    /* DEBUG
-    let s = codegen.to_string();
-    let res = syn::parse_file(&s);
-
-    if let Ok(file) = &res {
-        println!("{}", prettyplease::unparse(&file));
-    } else {
-        println!("pretty print failed");
-        println!("{}", s);
-        res.unwrap();
+    if DEBUG_PRINT {
+        let s = codegen.to_string();
+        let res = syn::parse_file(&s);
+        if let Ok(file) = &res {
+            println!("{}", prettyplease::unparse(&file));
+        } else {
+            println!("pretty print failed");
+            println!("{}", s);
+            res.unwrap();
+        }
     }
-    */
 
     if pass != 0 {
         // Ok...

@@ -1,4 +1,4 @@
-use rust_sync::sync;
+use rustre::sync;
 
 fn f(x: f64) -> f64 {
     x * 2.

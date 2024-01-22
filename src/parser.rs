@@ -62,7 +62,11 @@ pub struct TypesFormat<'a>(&'a Types);
 
 impl<'a> Display for TypesFormat<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.iter().format(" * ").fmt(f)
+        if self.0.is_empty() {
+            write!(f, "unit")
+        } else {
+            self.0.iter().format(" * ").fmt(f)
+        }
     }
 }
 
@@ -1227,11 +1231,9 @@ impl Parse for Node {
             if id.to_string() == "export" {
                 match export {
                     None => export = Some((i, attr.span())),
-                    Some((_, span)) => {
+                    Some((_, _)) => {
                         return Err(input.error(format!(
-                            "Multiple #[export] attribute found at {:?} and {:?}",
-                            span,
-                            attr.span()
+                            "Multiple #[export] attributes"
                         )))
                     }
                 }

@@ -151,7 +151,16 @@ impl Decl {
             Some(decl.vars.iter().map(|var| var.ty.clone()).collect()),
             extern_functions,
         )?;
-        if let Some((id, expected_type, found_type)) = expr
+
+        if expr.types.len() != decl.vars.len() {
+            return Err(Error::types_mismatch(
+                expr.span,
+                expr.types,
+                decl.vars.iter().map(|var| var.ty.clone()).collect(),
+            ));
+        }
+
+        if let Some((_, expected_type, found_type)) = expr
             .types
             .iter()
             .zip(decl.vars.iter())
@@ -159,7 +168,7 @@ impl Decl {
             .find(|(_, expected_type, found_type)| expected_type != found_type)
         {
             return Err(Error::type_mismatch(
-                id.span(),
+                expr.span,
                 expected_type.clone(),
                 found_type.clone(),
             ));
