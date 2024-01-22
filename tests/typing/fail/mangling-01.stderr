@@ -1,13 +1,5 @@
-error[E0425]: cannot find value `var_4` in this scope
-  --> tests/typing/fail/mangling-01.rs:3:1
-   |
-3  | / sync! {
-4  | |     node oui() = (a)
-5  | |     where
-6  | |         c : bool = false,
-...  |
-16 | |         };
-17 | | }
-   | |_^ help: a local variable with a similar name exists: `var_0`
-   |
-   = note: this error originates in the macro `sync` (in Nightly builds, run with -Z macro-backtrace for more info)
+error: found type `int on c`, but a basic type was expected
+ --> tests/typing/fail/mangling-01.rs:4:19
+  |
+4 |     node oui() = (a)
+  |                   ^
