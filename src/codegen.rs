@@ -397,6 +397,12 @@ impl ToTokens for Node {
                 iterator: T,
                 node: #node_name
             }
+
+            impl<T> #iterator_name<T> {
+                #vis fn reset(&mut self) {
+                    self.node.reset()
+                }
+            }
             
             struct #node_name {
                 counter: usize,
