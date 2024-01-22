@@ -22,12 +22,18 @@ sync! {
 }
 
 fn main() {
-    let mut oui = sync::Nodeoui::new();
-    for b in [true, false, true, false, true] {
-        println!("{}", oui.step((b,)).0);
+    let mut oui = sync::oui(
+        [
+            true, false, true, false, true, false, true, false, true, true,
+        ]
+        .into_iter()
+        .map(|x| (x,)),
+    );
+    for b in (&mut oui).take(5) {
+        println!("{}", b.0);
     }
     oui.reset();
-    for b in [false, true, false, true, true] {
-        println!("{}", oui.step((b,)).0);
+    for b in oui {
+        println!("{}", b.0);
     }
 }

@@ -403,7 +403,7 @@ impl ToTokens for Node {
                     self.node.reset()
                 }
             }
-            
+
             struct #node_name {
                 counter: usize,
                 #fields_decl

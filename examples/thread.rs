@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use rust_sync::sync;
+use rustre::sync;
 
 fn f() -> bool {
-    for i in 0..5 {
+    for i in 0..6 {
         std::thread::sleep(Duration::from_millis(200));
         println!("sleep 1: {}", i);
     }
@@ -19,21 +19,26 @@ fn g() -> bool {
 sync! {
     #![pass(3)]
 
-    node sleep1() = (a1)
+    node sleep1() = (a)
     where
-        a1 : bool = f();
+        a : bool = f();
 
-    node sleep2() = (a2)
+    node sleep2() = (b)
     where
-        a2 : bool = g();
+        b : bool = g();
 
     #[export]
-    node main(b: bool) = ()
+    node main() = ()
     where
-        a : bool = true -> merge b {
-            true => pre spawn sleep1() when b,
-            false => pre spawn sleep2() whennot b,
-        }
+        a : bool = true -> pre spawn sleep1(),
+        b : bool = false -> pre spawn sleep2();
 }
 
-fn main() {}
+fn main() {
+    let mut it = sync::main(std::iter::repeat(()));
+    for _ in 0..3 {
+        let now = std::time::Instant::now();
+        let _ = it.next().unwrap();
+        println!("It took {:?}", now.elapsed());
+    }
+}
