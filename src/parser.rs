@@ -55,6 +55,16 @@ pub struct Type {
     pub clocks: Vec<ClockType>,
 }
 
+impl Type {
+    fn assert_basic(self, span: Span) -> Result<Self, Error> {
+        if !self.clocks.is_empty() {
+            Err(Error::basic_type_expected(span, self))
+        } else {
+            Ok(self)
+        }
+    }
+}
+
 pub type Types = SmallVec<[Type; 1]>;
 
 #[derive(Debug)]
@@ -1206,10 +1216,16 @@ impl Node {
                 types
                     .get(ident.to_string())
                     .cloned()
-                    .ok_or_else(|| Error::undef_var(ident))
+                    .ok_or_else(|| Error::undef_var(ident))?
+                    .assert_basic(ident.span())
             })
             .collect::<Result<_, _>>()?;
-        let arg_types = self.params.0.iter().map(|arg| arg.ty.clone()).collect();
+        let arg_types = self
+            .params
+            .0
+            .iter()
+            .map(|arg| arg.ty.clone().assert_basic(arg.id.span()))
+            .collect::<Result<_, _>>()?;
         Ok(NodeType {
             arg_types,
             ret_types,

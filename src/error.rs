@@ -206,6 +206,10 @@ impl Error {
         )
     }
 
+    pub fn basic_type_expected(span: Span, r#type: Type) -> Self {
+        Self::new(ErrorKind::BasicTypeExpected { r#type }, span)
+    }
+
     pub fn raise(self) -> ! {
         match *self.kind {
             ErrorKind::TwiceVar { name, def_span } => {
@@ -382,6 +386,11 @@ impl Error {
                 found,
                 if found == 1 { "was" } else { "were" },
             ),
+            ErrorKind::BasicTypeExpected { r#type } => abort!(
+                self.span,
+                "found type `{}`, but a basic type was expected",
+                r#type,
+            ),
         }
     }
 }
@@ -461,5 +470,8 @@ pub enum ErrorKind {
         expected: usize,
         found: usize,
         node: String,
+    },
+    BasicTypeExpected {
+        r#type: Type,
     },
 }
