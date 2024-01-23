@@ -619,6 +619,15 @@ impl Expr {
                 }
             }
             PExpr::FunCall(f, args, spawn) => {
+                let first_index = if spawn {
+                    if first_index == 0 {
+                        return Err(Error::negative_first_index(span));
+                    } else {
+                        first_index - 1
+                    }
+                } else {
+                    first_index
+                };
                 let f_symb = f.to_string();
                 let typed_args = args
                     .into_iter()
