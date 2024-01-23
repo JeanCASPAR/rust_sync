@@ -1232,9 +1232,7 @@ impl Parse for Node {
                 match export {
                     None => export = Some((i, attr.span())),
                     Some((_, _)) => {
-                        return Err(input.error(format!(
-                            "Multiple #[export] attributes"
-                        )))
+                        return Err(input.error("Multiple #[export] attributes"))
                     }
                 }
             }
