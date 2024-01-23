@@ -1,0 +1,328 @@
+\documentclass[professionalfonts]{beamer}
+\usepackage{cmap}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[french]{babel}
+\usepackage{minted}
+\usepackage{tikz}
+
+\usetheme{AnnArbor}
+\usecolortheme{spruce}
+
+\makeatletter
+\newcommand*{\currentname}{\@currentlabelname}
+\makeatother
+
+\newcommand{\keyword}[1]{{\color{green!50!black}\bf{#1}}}
+\newcommand{\type}[1]{{\color{blue}#1}}
+\newcommand{\node}{\keyword{node}}
+\newcommand{\pre}{\keyword{pre}}
+\newcommand{\where}{\keyword{where}}
+\newcommand{\when}{\keyword{when}}
+\newcommand{\merge}{\keyword{merge}}
+\newcommand{\rif}{\keyword{if}}
+\newcommand{\relse}{\keyword{else}}
+\newcommand{\whennot}{\keyword{whennot}}
+\newcommand{\true}{\keyword{true}}
+\newcommand{\spawn}{\keyword{spawn}}
+\newcommand{\false}{\keyword{false}}
+\newcommand{\extern}{\keyword{extern}}
+\renewcommand{\int}{\type{int}}
+\newcommand{\bool}{\type{bool}}
+\newcommand{\float}{\type{float}}
+\newcommand{\on}{\type{on}}
+
+\tikzset{onslide/.code args={<#1>#2}{%
+  \only<#1>{\pgfkeysalso{#2}}
+}}
+
+\title{Rustre}
+\subtitle{Rustre = Rust + Lustre}
+\author[J. Caspar \and A. Mathieu]{Jean Caspar \and Adrien Mathieu}
+\date{Lundi 22 Janvier}
+
+\setbeamertemplate{navigation symbols}{}
+
+\begin{document}
+\begingroup
+\setbeamertemplate{headline}{}
+\setbeamertemplate{footline}{}
+\begin{frame}[noframenumbering]
+  \titlepage
+\end{frame}
+\endgroup
+
+\section{Introduction}
+\subsection{Objectifs}
+\begin{frame}
+  \frametitle{\currentname}
+
+  Rustre est un DSL Lustre embarqué dans Rust.\pause
+  \begin{itemize}
+  \item il compile vers (l'AST) Rust;
+    \pause
+  \item le code Lustre peut appeler des fonctions Rust;
+    \pause
+  \item le code Rust peut utiliser des nœuds Lustre à travers une interface de streams
+    \pause
+  \item le code Lustre est enrichi d'une primitive permettant de paralléliser le calcul
+  \end{itemize}
+\end{frame}
+
+\subsection{Gestion d'erreurs}
+\begin{frame}
+  \frametitle{\currentname}
+
+  Les erreurs d'analyse syntaxique, de typage et d'ordonnancement sont intégrées aux messages
+  d'erreur de Rust.\pause
+  \begin{center}
+    Demo! % erreur-01.rs
+  \end{center}
+  \pause
+  Les erreurs ne sont pas accumulées, seule la première erreur rencontrée est signalée.
+\end{frame}
+
+\section{Frontend}
+\subsection{La syntaxe}
+\begin{frame}[fragile]
+  \frametitle{\currentname}
+
+  La syntaxe est inspirée de Lustre, Rust-ifiée.\pause
+  \begin{minted}[frame=lines,escapeinside=@@]{text}
+@\node@ f(x : @\int@, c : @\bool@) = (x, y)
+@\where@
+    compteur : @\int@ = 0 -> @\pre@ compteur + 1,
+    o : @\int@ @\on@ c = compteur @\when@ c,
+    y : @\int@ = @\merge@ c {
+        @\true@ => o,
+        @\false@ => x @\whennot@ c,
+    };
+  \end{minted}
+  \pause Nous avons garder une certaine distance avec la syntaxe de Rust car pas toutes les
+  expressions de Rust sont supportées.
+\end{frame}
+
+\subsection{Analyse lexicale et syntaxique}
+\begin{frame}[fragile]
+  \frametitle{\currentname}
+
+  L'analyse lexicale et syntaxique repose sur celle du parser Rust: on lit un stream de tokens en
+  entrée, et on rend un stream de tokens.\pause\\
+  La génération de celle-ci utilise la macro \mintinline{rust}{quote!}, similaire au mécanisme de
+  quote de Lisp.\pause
+  \begin{minted}[frame=lines,escapeinside=@@]{rust}
+let token_stream = quote! {
+    #vis struct #iterator_name<T> {
+        iterator: T,
+        node: #node_name
+    }
+    @.{}.{}.@
+};
+  \end{minted}
+  \pause
+  N'ayant pas trouvé de générateur de grammaires pour \mintinline{rust}{syn} (l'API d'analyse
+  syntaxique de Rust), nous avons du écrire le parseur ``à la main''.
+\end{frame}
+
+\subsection{Typage}
+\begin{frame}[fragile]
+  \frametitle{\currentname}
+
+  Rustre possède trois types de base:
+  \begin{itemize}
+  \item \bool
+  \item \int
+  \item \float
+  \end{itemize}
+  et ne permet pas de définir ses propres types.\pause\par
+  En plus de ces types simples, Rustre a des types d'horloge: \(\tau\) \on{} \(c\) où
+  \(c\)~:~\bool.\pause\par
+  Pour des raisons de simplicité, nous n'autorisons pas de types dépendants dans les signatures
+  des fonctions:
+  \vspace*{-1em}
+  \begin{minted}[frame=lines,escapeinside=@@]{text}
+@\node@ ou_defaut(c : @\bool@, x : @\int@ @\on@ c, v : @\int@) = (o)
+@\where@
+    o : @\int@ = merge {
+        true => x,
+        false => v whennot c,
+    };
+  \end{minted}
+\end{frame}
+
+\section{Backend}
+\subsection{Génération de code}
+\begin{frame}[fragile]
+  \frametitle{\currentname}
+
+  Pour générer du code, on commence par ordonnancer les équations.\pause{} \emph{Ce qui est
+    actuellement buggé...}\pause\\
+  Le système de type garanti qu'il n'y a aucun accès à une valeur non-initialisée.\pause\\
+  En utilisant cette propriété, on demander au compilateur Rust de ne pas initialiser certaines
+  variables, quand ce n'est pas nécessaire. On peut donc exploiter les \pre{} et \verb`->`.\pause
+  \begin{center}
+    Demo!
+  \end{center}
+\end{frame}
+
+\subsection{Appel de fonctions Rust}
+\begin{frame}[fragile]
+  \frametitle{\currentname}
+
+  L'expansion des macros se fait au moment de l'analyse syntaxique d'un programme Rust. On n'a
+  donc pas accès à de l'information de typage produite par Rust.\pause\\
+  Or, il est nécessaire de connaître les types des valeurs manipulées:
+  \begin{minted}[frame=lines, escapeinside=@@]{text}
+@\node@ main() = (x)
+@\where@
+    x : @\int@ = g(f(1) -> @\pre@ f(2));
+  \end{minted}
+\end{frame}
+\begin{frame}[fragile]
+  \frametitle{\currentname}
+
+  Deux solutions possibles:\pause
+  \begin{itemize}
+  \item ajouter une déclaration pour chaque fonction
+    \begin{minted}[frame=lines, escapeinside=@@]{text}
+@\extern@ f(@\int@) -> @\bool@;
+@\extern@ g(@\bool@) -> @\int@;
+
+@\node@ main() = (x)
+@\where@
+    x : @\int@ = g(f(1) -> @\pre@ f(2));
+    \end{minted}
+    \pause
+  \item obliger les appels externes à être nommés
+    \begin{minted}[frame=lines, escapeinside=@@]{text}
+@\node@ main() = (x)
+@\where@
+    y : @\bool@ = f(1) -> @\pre@ f(2),
+    x : @\int@ = g(y);
+    \end{minted}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{\currentname}
+
+  La première solution a deux inconvénients majeurs:\pause
+  \begin{itemize}
+  \item elle est lourde en déclarations
+    \pause
+  \item
+    elle empêche le polymorphisme:
+    \begin{minted}{rust}
+fn print_newline(x: impl Display) {
+    println!("{x}");
+}
+    \end{minted}
+  \end{itemize}
+  \pause La deuxième solution ne nécessite pas de déclarations, et supporte pleinement le système
+  de types complexe de Rust.\pause
+  \begin{center}
+    Demo! % extern-01.rs
+  \end{center}
+\end{frame}
+
+\subsection{Streams et itérateurs}
+\begin{frame}
+  \frametitle{\currentname}
+  
+  La sémantique de Lustre est basée sur les streams. Cela correspond assez naturellement aux
+  itérateurs de Rust, la seule différence étant que ceux-ci ne doivent pas nécessairement être
+  infinis.\pause\par
+  Un nœud \(f : \tau_1 \times \ldots \times \tau_n \to \tau\) est donc traduit vers une fonction
+  \[\hat{f} : (\tau_1\times\ldots\times\tau_n)^*\to\tau^*\]
+  \pause
+  Notons qu'en Lustre, on aurait plutôt traduit ça vers \[
+    \hat{f'} : \tau_1^*\times\ldots\times\tau_n^*\to\tau^*
+  \]
+  ce qui est \emph{moins général}.
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{\currentname}
+
+  Pour passer de \(\tau_1^*\times\tau_2^*\) vers \((\tau_1\times\tau_2)^*\)
+  \begin{center}
+    \begin{tikzpicture}
+      \draw[onslide=<1>red,onslide=<2->dashed] (0,0) rectangle (1,1);
+      \draw[onslide=<1>red,onslide=<2->dashed] (0,1.5) rectangle (1,2.5);
+      \pause
+      \draw[onslide=<2>red,onslide=<3->dashed] (1,0) rectangle (2,1);
+      \draw[onslide=<2>red,onslide=<3->dashed] (1,1.5) rectangle (2,2.5);
+      \pause
+      \draw[onslide=<3>red,onslide=<4->dashed] (2,0) rectangle (3,1);
+      \draw[onslide=<3>red,onslide=<4->dashed] (2,1.5) rectangle (3,2.5);
+      \pause
+      \draw[onslide=<4>red,onslide=<5->dashed] (3,0) rectangle (4,1);
+      \draw[onslide=<4>red,onslide=<5->dashed] (3,1.5) rectangle (4,2.5);
+      \pause
+      \node at (5,1.25) {$\ldots$};
+    \end{tikzpicture}
+  \end{center}\par
+  \uncover<6->{
+    Pour passer de \((\tau_1\times\tau_2)^*\) vers \(\tau_1^*\times\tau_2^*\)
+    \begin{center}
+    \begin{tikzpicture}
+      \draw[onslide=<10>red,onslide=<11->dashed] (0,0) rectangle (1,1);
+      \draw[onslide=<6>red,onslide=<7->dashed] (0,1.5) rectangle (1,2.5);
+      \onslide<7->
+      \draw[onslide=<11>red,onslide=<12->dashed] (1,0) rectangle (2,1);
+      \draw[onslide=<7>red,onslide=<8->dashed] (1,1.5) rectangle (2,2.5);
+      \onslide<8->
+      \draw[onslide=<12>red,onslide=<13->dashed] (2,0) rectangle (3,1);
+      \draw[onslide=<8>red,onslide=<9->dashed] (2,1.5) rectangle (3,2.5);
+      \onslide<9->
+      \draw[onslide=<13>red,onslide=<14->dashed] (3,0) rectangle (4,1);
+      \draw[onslide=<9>red,onslide=<10->dashed] (3,1.5) rectangle (4,2.5);
+      \onslide<14->
+      \node at (5,1.25) {$\ldots$};
+    \end{tikzpicture}
+  \end{center}}
+\end{frame}
+
+\subsection{Spawn}
+\begin{frame}[fragile]
+  \frametitle{\currentname}
+
+  On ajoute, par rapport aux langages synchrones usuels, une primitive \spawn{}.\pause\\
+  La sémantique de \spawn{} \(f(x_1,\ldots,x_n)\) est celle de \pre{} \(f(x_1,\ldots,x_n)\),
+  sauf que le calcul se fait dans un nouveau thread.\pause
+  \begin{minted}[frame=lines,escapeinside=@@]{text}
+@\node@ main() = (o)
+@\where@
+    compteur : @\int@ = 0 ->
+        @\rif@ @\pre@ c == 5 { 0 } @\relse@ { @\pre@ c + 1 },
+    c : @\bool@ = compteur == 0,
+    couteux : @\int@ @\on@ c = (0 -> @\spawn@ f()) @\when@ c,
+    o : @\int@ = @\merge@ c {
+        @\true@ => couteux,
+        @\false@ => 0 @\whennot@ c,
+    };
+  \end{minted}
+\end{frame}
+
+\subsection{Bugs}
+\begin{frame}[fragile]
+  \frametitle{\currentname}
+
+  On a quelques bugs non résolus:\pause
+  \begin{itemize}
+  \item le scheduler fait des choses étranges...
+    \pause
+  \item les horloges sont mal propagées:\pause{}
+    \begin{minted}[frame=lines, escapeinside=@@]{text}
+@\node@ main(c : bool) = (o)
+@\where@
+    o : int = merge c {
+        true => (1 -> 2) when c,
+        false => 0 whennot c,
+    };
+    \end{minted}
+    sur [\false, \true, \true], renvoie [0, 2, 2] au lieu de [0, 1, 2].
+  \end{itemize}
+\end{frame}
+
+\end{document}

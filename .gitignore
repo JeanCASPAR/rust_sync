@@ -1,2 +1,11 @@
 /target
 /Cargo.lock
+**/*.aux
+**/*.log
+**/*.pdf
+**/*.out
+**/*.nav
+**/*.snm
+**/*.toc
+**/*.vrb
+**/_minted-presentation
