@@ -17,7 +17,7 @@ sync! {
     #[export]
     node oui(c : bool) = (d)
     where
-        b : float = 0.0 -> pre spawn non(c),
+        b : float = 0.0 -> spawn non(c),
         d : float = f(b);
 }
 
