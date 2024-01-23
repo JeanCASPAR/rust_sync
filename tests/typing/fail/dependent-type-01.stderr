@@ -1,0 +1,5 @@
+error: found type `int on bool`, but a basic type was expected
+ --> tests/typing/fail/dependent-type-01.rs:6:24
+  |
+6 |     node oui(c : bool, x : int on bool) = ();
+  |                        ^
