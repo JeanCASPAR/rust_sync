@@ -7,7 +7,7 @@ sync! {
     node oui(c: bool) = (b)
     where
         b : int = merge c {
-            true => 1 -> 2 when c,
+            true => (1 -> 2) when c,
             false => 0 whennot c,
         };
 }
@@ -24,7 +24,7 @@ fn main() {
     for ((res,), expected) in [(false,), (true,), (true,)]
         .into_iter()
         .on(sync::oui)
-        .zip([0, 1, 2])
+        .zip([0, 2, 2])
     {
         assert_eq!(res, expected)
     }

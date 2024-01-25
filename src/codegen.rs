@@ -113,9 +113,12 @@ impl ToTokens for SIdent {
     }
 }
 
-impl ToTokens for Expr {
+// usize : index of the equation
+struct ExprWrapper<'a>(&'a Expr, usize);
+
+impl ToTokens for ExprWrapper<'_> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let ts = match &self.kind {
+        let ts = match &self.0.kind {
             ExprKind::Var(var) => {
                 quote! { #var }
             }
@@ -129,14 +132,13 @@ impl ToTokens for Expr {
                 }
             }
             ExprKind::Then(e1, e2) => {
+                let first_time = format_ident!("first_time_{}", self.1);
                 quote! {
-                    if *counter == 0 {
+                    if *#first_time {
+                        *#first_time = false;
                         #e1
                     } else {
-                        *counter -= 1;
-                        let e = #e2;
-                        *counter += 1;
-                        e
+                        #e2
                     }
                 }
             }
@@ -201,8 +203,14 @@ impl ToTokens for Node {
 
         let fields_decl = WrapEquations::new(
             &self.equations,
-            |eq: &Equation, _, tokens: &mut TokenStream| match eq.kind {
-                EqKind::Expr(_) | EqKind::Input => (),
+            |eq: &Equation, i, tokens: &mut TokenStream| match eq.kind {
+                _ if eq.is_then() => {
+                    let field = format_ident!("first_time_{}", i);
+                    tokens.extend(quote! {
+                        #field: bool,
+                    });
+                }
+                EqKind::Expr(..) | EqKind::Input => (),
                 EqKind::NodeCall {
                     ref ident, cell, ..
                 } => {
@@ -226,7 +234,13 @@ impl ToTokens for Node {
 
         let fields_init = WrapEquations::new(
             &self.equations,
-            |eq: &Equation, _, tokens: &mut TokenStream| match eq.kind {
+            |eq: &Equation, i, tokens: &mut TokenStream| match eq.kind {
+                _ if eq.is_then() => {
+                    let field = format_ident!("first_time_{}", i);
+                    tokens.extend(quote! {
+                        #field: true,
+                    });
+                }
                 EqKind::Expr(_) | EqKind::Input => (),
                 EqKind::NodeCall {
                     ref ident, cell, ..
@@ -250,11 +264,16 @@ impl ToTokens for Node {
 
         let reset = WrapEquations::new(
             &self.equations,
-            |eq: &Equation, _, tokens: &mut TokenStream| {
+            |eq: &Equation, i, tokens: &mut TokenStream| {
                 if let EqKind::NodeCall { cell, .. } = eq.kind {
                     let field = format_ident!("cell_{}", cell);
                     tokens.extend(quote! {
                         self.#field.reset();
+                    })
+                } else if eq.is_then() {
+                    let field = format_ident!("first_time_{}", i);
+                    tokens.extend(quote! {
+                        self.#field = true;
                     })
                 }
             },
@@ -263,7 +282,11 @@ impl ToTokens for Node {
         let unpack = {
             let fields = WrapEquations::new(
                 &self.equations,
-                |eq: &Equation, _, tokens: &mut TokenStream| match eq.kind {
+                |eq: &Equation, i, tokens: &mut TokenStream| match eq.kind {
+                    _ if eq.is_then() => {
+                        let field = format_ident!("first_time_{}", i);
+                        tokens.extend(quote! { #field, });
+                    }
                     EqKind::Expr(_) | EqKind::Input => (),
                     EqKind::NodeCall { cell, .. } => {
                         let field = format_ident!("cell_{}", cell);
@@ -279,20 +302,39 @@ impl ToTokens for Node {
             );
 
             quote! {
-                let #node_name { counter, #fields } = self;
+                let #node_name { #fields } = self;
             }
         };
 
         let compute = WrapEquations::new(
             &self.equations,
             |eq: &Equation, i, tokens: &mut TokenStream| {
-                let is_active = eq.types.clocks.iter().fold(quote! { true }, |acc, clock| {
-                    let id = &clock.clock;
-                    let pos = clock.positive;
-                    quote! {
-                        #acc && (#id == #pos)
-                    }
-                });
+                let is_active = eq
+                    .types
+                    .clocks
+                    .iter()
+                    .map(|clock| {
+                        let id = &clock.clock;
+                        let pos = clock.positive;
+                        quote! {
+                            (#id == #pos)
+                        }
+                    })
+                    .chain(eq.types.time.iter().map(|time| {
+                        let id = format_ident!("first_time_{}", time.eq);
+                        if time.on_first_time {
+                            quote! {
+                                *#id
+                            }
+                        } else {
+                            quote! {
+                                !*#id
+                            }
+                        }
+                    }))
+                    .fold(quote! { true }, |acc, next| {
+                        quote! { #acc && #next }
+                    });
 
                 let var = format_ident!("var_{}", i);
                 let ty = &eq.types;
@@ -336,7 +378,8 @@ impl ToTokens for Node {
                         }
                     }
                     EqKind::Expr(e) | EqKind::CellExpr(e, _) => {
-                        if ty.inner.len() == 1 && !matches!(e.kind, ExprKind::Tuple(_)) {
+                        let e = ExprWrapper(e, i);
+                        if ty.inner.len() == 1 && !matches!(e.0.kind, ExprKind::Tuple(_)) {
                             quote! { (#e,) }
                         } else {
                             quote! {
@@ -405,21 +448,18 @@ impl ToTokens for Node {
             }
 
             struct #node_name {
-                counter: usize,
                 #fields_decl
             }
 
             impl #node_name {
                 pub fn new() -> Self {
                     Self {
-                        counter: 0,
                         #fields_init
                     }
                 }
 
                 pub fn reset(&mut self) {
                     #reset
-                    self.counter = 0;
                 }
 
                 pub fn step(&mut self, input: #input_types) -> #ret_types {
@@ -427,8 +467,6 @@ impl ToTokens for Node {
 
                     ::std::thread::scope(|scope| {
                         #compute
-
-                        *counter += 1;
 
                         #save_cells
 

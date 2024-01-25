@@ -612,9 +612,23 @@ impl Expr {
                     base: e_true_type.base,
                     clocks: clock_type.clocks.clone(),
                 };
+                let clock = PExpr::Var(clock);
+                let clock = Self::do_stuff(
+                    Spanned { inner: clock, span },
+                    context,
+                    node_types,
+                    first_index,
+                    None,
+                    extern_functions,
+                )
+                .unwrap(); // we check above that this is correct
                 Self {
                     types: types![merge_type],
-                    kind: ExprKind::Merge(clock, Box::new(typed_e_true), Box::new(typed_e_false)),
+                    kind: ExprKind::If(
+                        Box::new(clock),
+                        Box::new(typed_e_true),
+                        Box::new(typed_e_false),
+                    ),
                     span,
                 }
             }
@@ -800,7 +814,6 @@ pub enum ExprKind {
     FloatCast(Box<Expr>),
     When(Box<Expr>, Ident),
     WhenNot(Box<Expr>, Ident),
-    Merge(Ident, Box<Expr>, Box<Expr>),
     /// a spawned funcall cannot be extern
     FunCall {
         extern_symbol: bool,
