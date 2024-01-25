@@ -311,27 +311,23 @@ impl ToTokens for Node {
             |eq: &Equation, i, tokens: &mut TokenStream| {
                 let is_active = eq
                     .types
-                    .clocks
+                    .time
                     .iter()
-                    .map(|clock| {
+                    .map(|time| {
+                        let id = format_ident!("first_time_{}", time.eq);
+                        (quote! { *#id }, time.on_first_time)
+                    })
+                    .chain(eq.types.clocks.iter().map(|clock| {
                         let id = &clock.clock;
-                        let pos = clock.positive;
-                        quote! {
-                            (#id == #pos)
+                        (quote! { #id }, clock.positive)
+                    }))
+                    .map(|(id, state)| {
+                        if state {
+                            quote! { #id }
+                        } else {
+                            quote! { !#id }
                         }
                     })
-                    .chain(eq.types.time.iter().map(|time| {
-                        let id = format_ident!("first_time_{}", time.eq);
-                        if time.on_first_time {
-                            quote! {
-                                *#id
-                            }
-                        } else {
-                            quote! {
-                                !*#id
-                            }
-                        }
-                    }))
                     .fold(quote! { true }, |acc, next| {
                         quote! { #acc && #next }
                     });
