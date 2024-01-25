@@ -41,15 +41,16 @@ impl ClockType {
 pub struct Types {
     pub inner: SmallVec<[BaseType; 1]>,
     pub clocks: Vec<ClockType>,
+    pub time: Vec<TimeCounter>,
 }
 
 impl Types {
-    fn from(types: PTypes, store: &mut StringPatriciaMap<SIdent>) -> Self {
+    fn from(types: PTypes, store: &mut StringPatriciaMap<SIdent>, time: Vec<TimeCounter>) -> Self {
         let mut inner = SmallVec::with_capacity(types.len());
         let mut clocks = Vec::new();
         for ty in types {
             inner.push(ty.base);
-            if !clocks.is_empty() {
+            if clocks.is_empty() {
                 // we suppose that all types have the same clocks in a tuple
                 // TODO: change when clocks are supported by types at typing
                 clocks.extend(
@@ -60,12 +61,19 @@ impl Types {
             }
         }
 
-        Self { inner, clocks }
+        Self {
+            inner,
+            clocks,
+            time,
+        }
     }
 
     fn permut(&mut self, permutations: &mut [usize]) {
         for clock in &mut self.clocks {
-            clock.clock.idx = permutations[clock.clock.idx];
+            clock.clock.eq = permutations[clock.clock.eq];
+        }
+        for TimeCounter { eq, .. } in &mut self.time {
+            *eq = permutations[*eq];
         }
     }
 }
@@ -75,6 +83,7 @@ impl Types {
         Self {
             inner: SmallVec::new(),
             clocks: Vec::new(),
+            time: Vec::new(),
         }
     }
 }
@@ -189,7 +198,7 @@ pub enum EqKind {
     Input,
     NodeCall {
         ident: Ident,
-        args: Vec<Expr>,
+        args: Vec<SIdent>,
         cell: usize,
         spawn: bool,
     },
@@ -210,20 +219,20 @@ pub enum ExprKind {
     Unit,
     /// cell number
     Pre(usize),
-    Then(Box<Expr>, Box<Expr>),
-    Minus(Box<Expr>),
-    Not(Box<Expr>),
-    MathBinOp(Box<Expr>, MathBinOp, Box<Expr>),
-    BoolBinOp(Box<Expr>, BoolBinOp, Box<Expr>),
-    CompOp(Box<Expr>, CompOp, Box<Expr>),
-    If(Box<Expr>, Box<Expr>, Box<Expr>),
+    Then(SIdent, SIdent),
+    Minus(SIdent),
+    Not(SIdent),
+    MathBinOp(SIdent, MathBinOp, SIdent),
+    BoolBinOp(SIdent, BoolBinOp, SIdent),
+    CompOp(SIdent, CompOp, SIdent),
+    If(SIdent, SIdent, SIdent),
     Int(i64),
     Float(f64),
     Bool(bool),
-    FloatCast(Box<Expr>),
+    FloatCast(SIdent),
     FunCall {
         function: Ident,
-        arguments: Vec<Expr>,
+        arguments: Vec<SIdent>,
     },
     Tuple(Vec<SIdent>),
 }
@@ -233,39 +242,45 @@ impl Expr {
     fn permut(&mut self, permutations: &mut [usize]) {
         self.ty.permut(permutations);
         match &mut self.kind {
-            ExprKind::Var(id) => id.eq = permutations[id.eq],
-            ExprKind::Then(e1, e2)
-            | ExprKind::MathBinOp(e1, _, e2)
-            | ExprKind::BoolBinOp(e1, _, e2)
-            | ExprKind::CompOp(e1, _, e2) => {
-                e1.permut(permutations);
-                e2.permut(permutations);
-            }
-            ExprKind::Minus(e) | ExprKind::Not(e) | ExprKind::FloatCast(e) => {
-                e.permut(permutations)
-            }
-            ExprKind::If(cond, e_then, e_else) => {
-                cond.permut(permutations);
-                e_then.permut(permutations);
-                e_else.permut(permutations);
-            }
-            ExprKind::Unit
-            | ExprKind::Pre(_)
-            | ExprKind::Int(_)
-            | ExprKind::Float(_)
-            | ExprKind::Bool(_) => (),
-            ExprKind::FunCall { arguments, .. } => {
-                for arg in arguments {
-                    arg.permut(permutations);
-                }
-            }
+            ExprKind::Var(id)
+            | ExprKind::Minus(id)
+            | ExprKind::Not(id)
+            | ExprKind::FloatCast(id) => id.eq = permutations[id.eq],
             ExprKind::Tuple(tuple) => {
                 for id in tuple {
                     id.eq = permutations[id.eq];
                 }
             }
+            ExprKind::Then(id1, id2)
+            | ExprKind::MathBinOp(id1, _, id2)
+            | ExprKind::BoolBinOp(id1, _, id2)
+            | ExprKind::CompOp(id1, _, id2) => {
+                id1.eq = permutations[id1.eq];
+                id2.eq = permutations[id2.eq];
+            }
+            ExprKind::If(id_cond, id_then, id_else) => {
+                id_cond.eq = permutations[id_cond.eq];
+                id_then.eq = permutations[id_then.eq];
+                id_else.eq = permutations[id_else.eq];
+            }
+            ExprKind::Unit
+            | ExprKind::Pre(..)
+            | ExprKind::Int(..)
+            | ExprKind::Float(..)
+            | ExprKind::Bool(..) => (),
+            ExprKind::FunCall { arguments, .. } => {
+                for id in arguments {
+                    id.eq = permutations[id.eq];
+                }
+            }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TimeCounter {
+    pub eq: usize,
+    pub on_first_time: bool,
 }
 
 #[derive(Debug)]
@@ -278,17 +293,34 @@ impl Equation {
     pub fn new(types: Types, kind: EqKind) -> Self {
         Self { types, kind }
     }
+
+    pub fn is_then(&self) -> bool {
+        matches!(
+            self.kind,
+            EqKind::Expr(Expr {
+                kind: ExprKind::Then(..),
+                ..
+            }) | EqKind::CellExpr(
+                Expr {
+                    kind: ExprKind::Then(..),
+                    ..
+                },
+                _
+            )
+        )
+    }
 }
 
 #[derive(Debug)]
 struct Context {
     equations: Vec<(Equation, Option<Span>)>,
-    /// n in deps[m] if the equation m depends on the equation n
+    /// n in deps[m] <=> the equation m depends on the equation n
     deps: Vec<Vec<usize>>,
     /// we replace all idents by a pair whose first element is the number
     /// of the equation introducing it (0 if it is an input) and whose
     /// second element is the number of the ident in the declaration
     store: StringPatriciaMap<SIdent>,
+    /// the equation with number i is to be scheduled at order order[i]
     order: Vec<usize>,
     cells: usize,
     /// names of nodes that are instanciated in this node
@@ -307,28 +339,42 @@ impl Context {
         }
     }
 
-    fn schedule_eq(&mut self, node: TNode) -> Result<(), Error> {
-        self.equations
-            .push((Equation::new(Types::new(), EqKind::Input), None));
-        self.deps.push(Vec::new());
-        for (i, param) in node.params.0.iter().enumerate() {
-            // we suppose that input types do not have a clock
-            self.equations[0].0.types.inner.push(param.ty.base.clone());
-            self.store
-                .insert(param.id.to_string(), SIdent::new(0, i, false));
-        }
+    /// add en equation, returns its index in self.equations
+    fn add_equation(
+        &mut self,
+        ty: Types,
+        kind: EqKind,
+        span: Option<Span>,
+        deps: Vec<usize>,
+    ) -> usize {
+        self.equations.push((Equation::new(ty, kind), span));
+        self.deps.push(deps);
+        self.equations.len() - 1
+    }
 
+    /// schedule all equations of the node
+    fn schedule_eq(&mut self, node: TNode) -> Result<(), Error> {
+        let vec_ty = node
+            .params
+            .0
+            .iter()
+            .enumerate()
+            .map(|(i, param)| {
+                self.store
+                    .insert(param.id.to_string(), SIdent::new(0, i, false));
+                param.ty.base.clone()
+            })
+            .collect();
+        let mut ty = Types::new();
+        ty.inner = vec_ty;
+        self.add_equation(ty, EqKind::Input, None, Vec::new());
+
+        let mut eqs_id = Vec::with_capacity(node.body.len());
         for decl in node.body.iter() {
-            let i = self.deps.len();
-            self.deps.push(Vec::new());
+            let ty = Types::from(decl.expr.inner.types.clone(), &mut self.store, Vec::new());
             // dummy EqKind::Input here because we cannot yet translate the expression
-            self.equations.push((
-                Equation::new(
-                    Types::from(decl.expr.inner.types.clone(), &mut self.store),
-                    EqKind::Input,
-                ),
-                Some(decl.expr.span),
-            ));
+            let i = self.add_equation(ty, EqKind::Input, Some(decl.expr.span), Vec::new());
+            eqs_id.push(i);
 
             for (j, var) in decl.vars.iter().enumerate() {
                 self.store
@@ -336,9 +382,8 @@ impl Context {
             }
         }
 
-        for (i, decl) in node.body.into_iter().enumerate() {
-            let i = i + 1;
-            let e = self.normalize_expr(decl.expr.inner, i, true);
+        for (i, decl) in eqs_id.into_iter().zip(node.body.into_iter()) {
+            let e = self.normalize_expr(decl.expr.inner, i, Vec::new());
             self.equations[i].0.kind = EqKind::Expr(e);
         }
 
@@ -347,13 +392,21 @@ impl Context {
         Ok(())
     }
 
-    fn normalize_expr(&mut self, e: TExpr, eq: usize, depends: bool) -> Expr {
+    /// normalize an expression, generating equations for all subexpressions and dependencies between them
+    /// parent is the parent equation
+    /// time is the time at wich the equation is defined
+    fn normalize_expr(&mut self, e: TExpr, parent: usize, time: Vec<TimeCounter>) -> Expr {
         let mut add_dep = |i: usize| {
-            if depends && !self.deps[eq].contains(&i) {
-                self.deps[eq].push(i);
+            if !self.deps[parent].contains(&i) {
+                self.deps[parent].push(i);
             }
         };
-        let ty = Types::from(e.types, &mut self.store);
+        let ty = Types::from(e.types, &mut self.store, time.clone());
+        let sident = |eq: usize| SIdent {
+            eq,
+            idx: 0,
+            wait: false,
+        };
         let kind = match e.kind {
             TExprKind::Var(id) => {
                 let id = self.store.get(id.to_string()).unwrap().clone();
@@ -362,100 +415,227 @@ impl Context {
             }
             TExprKind::Unit => ExprKind::Unit,
             TExprKind::Pre(e) => {
-                let i = self.equations.len();
-                let s = format!("#{}", i);
                 let ty = ty.clone();
                 if ty.inner.len() > 1 {
                     todo!("pre with tuple unimplemented yet")
                 }
 
+                let i = self.add_equation(ty, EqKind::Input, Some(e.span), Vec::new());
+                let s = format!("#{}", i);
                 self.store.insert(s.clone(), SIdent::new(i, 0, false));
-                self.deps.push(Vec::new());
-
-                self.equations
-                    .push((Equation::new(ty.clone(), EqKind::Input), Some(e.span)));
                 let cell = self.cells;
                 self.cells += 1;
 
-                let e = self.normalize_expr(*e, i, true);
+                let e = self.normalize_expr(*e, i, time);
 
                 self.equations[i].0.kind = EqKind::CellExpr(e, cell);
 
                 ExprKind::Pre(cell)
             }
             TExprKind::Then(e1, e2) => {
-                let e1 = self.normalize_expr(*e1, eq, depends);
-                let e2 = self.normalize_expr(*e2, eq, depends);
-                ExprKind::Then(Box::new(e1), Box::new(e2))
+                let mut present = time.clone();
+                present.push(TimeCounter {
+                    eq: parent,
+                    on_first_time: true,
+                });
+                let mut future = time.clone();
+                future.push(TimeCounter {
+                    eq: parent,
+                    on_first_time: false,
+                });
+
+                let ty1 = Types::new();
+                let eq1 = self.add_equation(ty1, EqKind::Input, Some(e1.span), Vec::new());
+                let e1 = self.normalize_expr(*e1, eq1, present);
+                self.equations[eq1].0.types = e1.ty.clone();
+                self.equations[eq1].0.kind = EqKind::Expr(e1);
+
+                let ty2 = Types::new();
+                let eq2 = self.add_equation(ty2, EqKind::Input, Some(e2.span), Vec::new());
+                let e2 = self.normalize_expr(*e2, eq2, future);
+                self.equations[eq2].0.types = e2.ty.clone();
+                self.equations[eq2].0.kind = EqKind::Expr(e2);
+
+                if !self.deps[parent].contains(&eq1) {
+                    self.deps[parent].push(eq1);
+                }
+                if !self.deps[parent].contains(&eq2) {
+                    self.deps[parent].push(eq2);
+                }
+
+                ExprKind::Then(sident(eq1), sident(eq2))
             }
             TExprKind::Minus(e) => {
-                let e = self.normalize_expr(*e, eq, depends);
-                ExprKind::Minus(Box::new(e))
+                let ty = Types::new();
+                let eq = self.add_equation(ty, EqKind::Input, Some(e.span), Vec::new());
+                let e = self.normalize_expr(*e, eq, time);
+                self.equations[eq].0.types = e.ty.clone();
+                self.equations[eq].0.kind = EqKind::Expr(e);
+
+                if !self.deps[parent].contains(&eq) {
+                    self.deps[parent].push(eq);
+                }
+
+                ExprKind::Minus(sident(eq))
             }
             TExprKind::Not(e) => {
-                let e = self.normalize_expr(*e, eq, depends);
-                ExprKind::Not(Box::new(e))
+                let ty = Types::new();
+                let eq = self.add_equation(ty, EqKind::Input, Some(e.span), Vec::new());
+                let e = self.normalize_expr(*e, eq, time);
+                self.equations[eq].0.types = e.ty.clone();
+                self.equations[eq].0.kind = EqKind::Expr(e);
+
+                if !self.deps[parent].contains(&eq) {
+                    self.deps[parent].push(eq);
+                }
+
+                ExprKind::Not(sident(eq))
             }
             TExprKind::MathBinOp(e1, op, e2) => {
-                let e1 = self.normalize_expr(*e1, eq, depends);
-                let e2 = self.normalize_expr(*e2, eq, depends);
+                let ty1 = Types::new();
+                let eq1 = self.add_equation(ty1, EqKind::Input, Some(e1.span), Vec::new());
+                let e1 = self.normalize_expr(*e1, eq1, time.clone());
+                self.equations[eq1].0.types = e1.ty.clone();
+                self.equations[eq1].0.kind = EqKind::Expr(e1);
 
-                ExprKind::MathBinOp(Box::new(e1), op, Box::new(e2))
+                let ty2 = Types::new();
+                let eq2 = self.add_equation(ty2, EqKind::Input, Some(e2.span), Vec::new());
+                let e2 = self.normalize_expr(*e2, eq2, time);
+                self.equations[eq2].0.types = e2.ty.clone();
+                self.equations[eq2].0.kind = EqKind::Expr(e2);
+
+                if !self.deps[parent].contains(&eq1) {
+                    self.deps[parent].push(eq1);
+                }
+                if !self.deps[parent].contains(&eq2) {
+                    self.deps[parent].push(eq2);
+                }
+
+                ExprKind::MathBinOp(sident(eq1), op, sident(eq2))
             }
             TExprKind::BoolBinOp(e1, op, e2) => {
-                let e1 = self.normalize_expr(*e1, eq, depends);
-                let e2 = self.normalize_expr(*e2, eq, depends);
+                let ty1 = Types::new();
+                let eq1 = self.add_equation(ty1, EqKind::Input, Some(e1.span), Vec::new());
+                let e1 = self.normalize_expr(*e1, eq1, time.clone());
+                self.equations[eq1].0.types = e1.ty.clone();
+                self.equations[eq1].0.kind = EqKind::Expr(e1);
 
-                ExprKind::BoolBinOp(Box::new(e1), op, Box::new(e2))
+                let ty2 = Types::new();
+                let eq2 = self.add_equation(ty2, EqKind::Input, Some(e2.span), Vec::new());
+                let e2 = self.normalize_expr(*e2, eq2, time);
+                self.equations[eq2].0.types = e2.ty.clone();
+                self.equations[eq2].0.kind = EqKind::Expr(e2);
+
+                if !self.deps[parent].contains(&eq1) {
+                    self.deps[parent].push(eq1);
+                }
+                if !self.deps[parent].contains(&eq2) {
+                    self.deps[parent].push(eq2);
+                }
+
+                ExprKind::BoolBinOp(sident(eq1), op, sident(eq2))
             }
             TExprKind::CompOp(e1, op, e2) => {
-                let e1 = self.normalize_expr(*e1, eq, depends);
-                let e2 = self.normalize_expr(*e2, eq, depends);
+                let ty1 = Types::new();
+                let eq1 = self.add_equation(ty1, EqKind::Input, Some(e1.span), Vec::new());
+                let e1 = self.normalize_expr(*e1, eq1, time.clone());
+                self.equations[eq1].0.types = e1.ty.clone();
+                self.equations[eq1].0.kind = EqKind::Expr(e1);
 
-                ExprKind::CompOp(Box::new(e1), op, Box::new(e2))
+                let ty2 = Types::new();
+                let eq2 = self.add_equation(ty2, EqKind::Input, Some(e2.span), Vec::new());
+                let e2 = self.normalize_expr(*e2, eq2, time);
+                self.equations[eq2].0.types = e2.ty.clone();
+                self.equations[eq2].0.kind = EqKind::Expr(e2);
+
+                if !self.deps[parent].contains(&eq1) {
+                    self.deps[parent].push(eq1);
+                }
+                if !self.deps[parent].contains(&eq2) {
+                    self.deps[parent].push(eq2);
+                }
+
+                ExprKind::CompOp(sident(eq1), op, sident(eq2))
             }
             TExprKind::If(b, e_then, e_else) => {
-                let b = self.normalize_expr(*b, eq, depends);
-                let e_then = self.normalize_expr(*e_then, eq, depends);
-                let e_else = self.normalize_expr(*e_else, eq, depends);
+                let ty_b = Types::new();
+                let eq_b = self.add_equation(ty_b, EqKind::Input, Some(b.span), Vec::new());
+                let b = self.normalize_expr(*b, eq_b, time.clone());
+                self.equations[eq_b].0.types = b.ty.clone();
+                self.equations[eq_b].0.kind = EqKind::Expr(b);
 
-                ExprKind::If(Box::new(b), Box::new(e_then), Box::new(e_else))
+                let ty_then = Types::new();
+                let eq_then =
+                    self.add_equation(ty_then, EqKind::Input, Some(e_then.span), Vec::new());
+                let e_then = self.normalize_expr(*e_then, eq_then, time.clone());
+                self.equations[eq_then].0.types = e_then.ty.clone();
+                self.equations[eq_then].0.kind = EqKind::Expr(e_then);
+
+                let ty_else = Types::new();
+                let eq_else = self.add_equation(ty_else, EqKind::Input, Some(e.span), Vec::new());
+                let e_else = self.normalize_expr(*e_else, eq_else, time);
+                self.equations[eq_else].0.types = e_else.ty.clone();
+                self.equations[eq_else].0.kind = EqKind::Expr(e_else);
+
+                if !self.deps[parent].contains(&eq_b) {
+                    self.deps[parent].push(eq_b);
+                }
+                if !self.deps[parent].contains(&eq_then) {
+                    self.deps[parent].push(eq_then);
+                }
+                if !self.deps[parent].contains(&eq_else) {
+                    self.deps[parent].push(eq_else);
+                }
+
+                ExprKind::If(sident(eq_b), sident(eq_then), sident(eq_else))
             }
             TExprKind::Int(n) => ExprKind::Int(n),
             TExprKind::Float(x) => ExprKind::Float(x),
             TExprKind::Bool(b) => ExprKind::Bool(b),
             TExprKind::FloatCast(e) => {
-                let e = self.normalize_expr(*e, eq, depends);
+                let ty = Types::new();
+                let eq = self.add_equation(ty, EqKind::Input, Some(e.span), Vec::new());
+                let e = self.normalize_expr(*e, eq, time);
+                self.equations[eq].0.types = e.ty.clone();
+                self.equations[eq].0.kind = EqKind::Expr(e);
 
-                ExprKind::FloatCast(Box::new(e))
+                if !self.deps[parent].contains(&eq) {
+                    self.deps[parent].push(eq);
+                }
+
+                ExprKind::FloatCast(sident(eq))
             }
             TExprKind::When(e, id) => {
                 let id = self.store.get(id.to_string()).unwrap().clone();
                 add_dep(id.eq);
-                self.normalize_expr(*e, eq, depends).kind
+
+                let ty = Types::new();
+                let eq = self.add_equation(ty, EqKind::Input, Some(e.span), Vec::new());
+                let e = self.normalize_expr(*e, eq, time);
+                self.equations[eq].0.types = e.ty.clone();
+                self.equations[eq].0.kind = EqKind::Expr(e);
+
+                if !self.deps[parent].contains(&eq) {
+                    self.deps[parent].push(eq);
+                }
+
+                ExprKind::Var(sident(eq))
             }
             TExprKind::WhenNot(e, id) => {
                 let id = self.store.get(id.to_string()).unwrap().clone();
                 add_dep(id.eq);
-                self.normalize_expr(*e, eq, depends).kind
-            }
-            TExprKind::Merge(id, e_when, e_whennot) => {
-                let id = self.store.get(id.to_string()).unwrap().clone();
-                add_dep(id.eq);
-                let e_when = self.normalize_expr(*e_when, eq, depends);
-                let e_whennot = self.normalize_expr(*e_whennot, eq, depends);
 
-                ExprKind::If(
-                    Box::new(Expr {
-                        kind: ExprKind::Var(id),
-                        ty: Types::from(
-                            PTypes::from_elem(BaseType::Bool.into(), 1),
-                            &mut self.store,
-                        ),
-                    }),
-                    Box::new(e_when),
-                    Box::new(e_whennot),
-                )
+                let ty = Types::new();
+                let eq = self.add_equation(ty, EqKind::Input, Some(e.span), Vec::new());
+                let e = self.normalize_expr(*e, eq, time);
+                self.equations[eq].0.types = e.ty.clone();
+                self.equations[eq].0.kind = EqKind::Expr(e);
+
+                if !self.deps[parent].contains(&eq) {
+                    self.deps[parent].push(eq);
+                }
+
+                ExprKind::Var(sident(eq))
             }
             TExprKind::FunCall {
                 extern_symbol,
@@ -466,7 +646,17 @@ impl Context {
                 if extern_symbol {
                     let mut args = Vec::with_capacity(arguments.len());
                     for arg in arguments {
-                        args.push(self.normalize_expr(arg, eq, depends));
+                        let ty = Types::new();
+                        let eq = self.add_equation(ty, EqKind::Input, Some(arg.span), Vec::new());
+                        let arg = self.normalize_expr(arg, eq, time.clone());
+                        self.equations[eq].0.types = arg.ty.clone();
+                        self.equations[eq].0.kind = EqKind::Expr(arg);
+
+                        if !self.deps[parent].contains(&eq) {
+                            self.deps[parent].push(eq);
+                        }
+
+                        args.push(sident(eq));
                     }
                     ExprKind::FunCall {
                         function,
@@ -478,22 +668,29 @@ impl Context {
                     self.cells += 1;
 
                     let s = format!("#{}", self.equations.len());
-                    let i = self.equations.len();
+                    let i = self.add_equation(ty.clone(), EqKind::Input, None, Vec::new());
                     let ty = ty.clone();
                     for j in 0..ty.inner.len() {
                         self.store.insert(s.clone(), SIdent::new(i, j, spawn));
                     }
-                    add_dep(i);
-
-                    self.deps.push(Vec::new());
-                    // dummy EqKind::Input
-                    self.equations
-                        .push((Equation::new(ty.clone(), EqKind::Input), None));
+                    // add_dep(i)
+                    if !self.deps[parent].contains(&i) {
+                        self.deps[parent].push(i);
+                    }
 
                     let mut args = Vec::with_capacity(arguments.len());
-                    for expr in arguments {
-                        let e = self.normalize_expr(expr, i, depends);
-                        args.push(e);
+                    for arg in arguments {
+                        let ty = Types::new();
+                        let eq = self.add_equation(ty, EqKind::Input, Some(arg.span), Vec::new());
+                        let arg = self.normalize_expr(arg, eq, time.clone());
+                        self.equations[eq].0.types = arg.ty.clone();
+                        self.equations[eq].0.kind = EqKind::Expr(arg);
+
+                        if !self.deps[i].contains(&eq) {
+                            self.deps[i].push(eq);
+                        }
+
+                        args.push(sident(eq));
                     }
 
                     self.equations[i].0.kind = EqKind::NodeCall {
@@ -574,6 +771,8 @@ impl Context {
 
 /// permut v according to permutations, and change the SIdent in the expressions
 /// contained in v
+/// we want that new_v[permutations[i]] = old_v[i]
+/// it is unsafe because we do so without cloning, but we still allocate a new vector
 /// SAFETY: the mapping i -> permutations[i] should be a permutation of [0, v.len()]
 unsafe fn permut(v: &mut Vec<Equation>, mut permutations: Vec<usize>) {
     assert_eq!(v.len(), permutations.len());
@@ -584,7 +783,7 @@ unsafe fn permut(v: &mut Vec<Equation>, mut permutations: Vec<usize>) {
             EqKind::CellExpr(e, _) | EqKind::Expr(e) => e.permut(&mut permutations),
             EqKind::NodeCall { args, .. } => {
                 for arg in args {
-                    arg.permut(&mut permutations);
+                    arg.eq = permutations[arg.eq];
                 }
             }
             EqKind::Input => (),
@@ -621,14 +820,28 @@ impl Node {
 
         let params = context.equations[0].0.types.clone();
 
-        let (ret_vars, ret_types) = ret
+        let (mut ret_vars, ret_types): (Vec<SIdent>, _) = ret
             .into_iter()
             .map(|(id, ty)| (context.store.get(&id.to_string()).unwrap().clone(), ty))
             .unzip();
-        let ret_types = Types::from(ret_types, &mut context.store);
+        let mut ret_types = Types::from(ret_types, &mut context.store, Vec::new());
 
         let mut equations = context.equations.into_iter().map(|eq| eq.0).collect();
+        // we want to invert the permutation context.order
+        {
+            let length = context.order.len();
+            let mut v = Vec::with_capacity(length);
+            for (i, j) in context.order.into_iter().enumerate() {
+                v.spare_capacity_mut()[j].write(i);
+            }
+            unsafe { v.set_len(length) }
+            context.order = v;
+        }
         unsafe {
+            ret_types.permut(&mut context.order);
+            for ret_var in &mut ret_vars {
+                ret_var.eq = context.order[ret_var.eq];
+            }
             permut(&mut equations, context.order);
         }
 
