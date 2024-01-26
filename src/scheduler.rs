@@ -13,12 +13,11 @@ use crate::{
 pub struct SIdent {
     pub eq: usize,
     pub idx: usize,
-    pub wait: bool,
 }
 
 impl SIdent {
-    pub fn new(eq: usize, idx: usize, wait: bool) -> Self {
-        Self { eq, idx, wait }
+    pub fn new(eq: usize, idx: usize) -> Self {
+        Self { eq, idx }
     }
 }
 
@@ -294,6 +293,7 @@ impl Equation {
         Self { types, kind }
     }
 
+    /// returns true if the equation is an expression of the form a -> b
     pub fn is_then(&self) -> bool {
         matches!(
             self.kind,
@@ -360,8 +360,7 @@ impl Context {
             .iter()
             .enumerate()
             .map(|(i, param)| {
-                self.store
-                    .insert(param.id.to_string(), SIdent::new(0, i, false));
+                self.store.insert(param.id.to_string(), SIdent::new(0, i));
                 param.ty.base.clone()
             })
             .collect();
@@ -377,8 +376,7 @@ impl Context {
             eqs_id.push(i);
 
             for (j, var) in decl.vars.iter().enumerate() {
-                self.store
-                    .insert(var.id.to_string(), SIdent::new(i, j, false));
+                self.store.insert(var.id.to_string(), SIdent::new(i, j));
             }
         }
 
@@ -402,11 +400,7 @@ impl Context {
             }
         };
         let ty = Types::from(e.types, &mut self.store, time.clone());
-        let sident = |eq: usize| SIdent {
-            eq,
-            idx: 0,
-            wait: false,
-        };
+        let sident = |eq: usize| SIdent { eq, idx: 0 };
         let kind = match e.kind {
             TExprKind::Var(id) => {
                 let id = self.store.get(id.to_string()).unwrap().clone();
@@ -422,10 +416,12 @@ impl Context {
 
                 let i = self.add_equation(ty, EqKind::Input, Some(e.span), Vec::new());
                 let s = format!("#{}", i);
-                self.store.insert(s.clone(), SIdent::new(i, 0, false));
+                self.store.insert(s.clone(), SIdent::new(i, 0));
                 let cell = self.cells;
                 self.cells += 1;
 
+                let mut time = time.clone();
+                let _ = time.pop(); // we pop the last then
                 let e = self.normalize_expr(*e, i, time);
 
                 self.equations[i].0.kind = EqKind::CellExpr(e, cell);
@@ -667,11 +663,11 @@ impl Context {
                     let cell = self.cells;
                     self.cells += 1;
 
-                    let s = format!("#{}", self.equations.len());
                     let i = self.add_equation(ty.clone(), EqKind::Input, None, Vec::new());
                     let ty = ty.clone();
                     for j in 0..ty.inner.len() {
-                        self.store.insert(s.clone(), SIdent::new(i, j, spawn));
+                        let s = format!("res {} of {}", j, i);
+                        self.store.insert(s.clone(), SIdent::new(i, j));
                     }
                     // add_dep(i)
                     if !self.deps[parent].contains(&i) {
@@ -679,6 +675,10 @@ impl Context {
                     }
 
                     let mut args = Vec::with_capacity(arguments.len());
+                    let mut time = time.clone();
+                    if spawn {
+                        let _ = time.pop(); // cf pre
+                    }
                     for arg in arguments {
                         let ty = Types::new();
                         let eq = self.add_equation(ty, EqKind::Input, Some(arg.span), Vec::new());
@@ -703,7 +703,7 @@ impl Context {
                     ExprKind::Tuple(
                         (0..ty.inner.len())
                             .into_iter()
-                            .map(|j| SIdent::new(i, j, spawn))
+                            .map(|j| SIdent::new(i, j))
                             .collect(),
                     )
                 }

@@ -95,13 +95,8 @@ impl ToTokens for SIdent {
         let var = format_ident!("var_{}", self.eq);
         let j = syn::Index::from(self.idx);
 
-        let maybe_uninit = quote! {
+        let value = quote! {
             (*#var.as_mut_ptr())
-        };
-        let value = if self.wait {
-            quote! { #maybe_uninit.join() }
-        } else {
-            maybe_uninit
         };
         let ts = quote! {
             unsafe {
@@ -212,10 +207,18 @@ impl ToTokens for Node {
                 }
                 EqKind::Expr(..) | EqKind::Input => (),
                 EqKind::NodeCall {
-                    ref ident, cell, ..
+                    ref ident,
+                    cell,
+                    spawn,
+                    ..
                 } => {
                     let field = format_ident!("cell_{}", cell);
                     let ty = format_ident!("Node{}", ident);
+                    let ty = if spawn {
+                        quote! { Handle<#ty> }
+                    } else {
+                        quote! { #ty }
+                    };
 
                     tokens.extend(quote! {
                         #field: ::std::boxed::Box<#ty>,
@@ -243,10 +246,18 @@ impl ToTokens for Node {
                 }
                 EqKind::Expr(_) | EqKind::Input => (),
                 EqKind::NodeCall {
-                    ref ident, cell, ..
+                    ref ident,
+                    cell,
+                    spawn,
+                    ..
                 } => {
                     let field = format_ident!("cell_{}", cell);
                     let ty = format_ident!("Node{}", ident);
+                    let ty = if spawn {
+                        quote! { Handle<#ty> }
+                    } else {
+                        quote! { #ty }
+                    };
 
                     tokens.extend(quote! {
                         #field: ::std::boxed::Box::new(<#ty>::new()),
@@ -334,9 +345,7 @@ impl ToTokens for Node {
 
                 let var = format_ident!("var_{}", i);
                 let ty = &eq.types;
-                let mut quoted_ty = quote! { #ty };
-                // force evaluation of the arguments of a call before a thread if launched, if any
-                let mut force_args = quote! {};
+                let quoted_ty = quote! { #ty };
                 let ts = match &eq.kind {
                     EqKind::Input => {
                         assert_eq!(i, 0);
@@ -345,19 +354,13 @@ impl ToTokens for Node {
                         }
                     }
                     EqKind::NodeCall {
-                        args, cell, spawn, ..
+                        args,
+                        cell,
+                        spawn: false,
+                        ..
                     } => {
                         let node = format_ident!("cell_{}", cell);
-                        let ts = if args.len() >= 1 {
-                            force_args.extend(args.iter().enumerate().map(|(i, e)| {
-                                let id = format_ident!("arg_{}", i);
-                                quote! {
-                                    let #id = #e;
-                                }
-                            }));
-                            let args = (0..args.len())
-                                .into_iter()
-                                .map(|i| format_ident!("arg_{}", i));
+                        if args.len() >= 1 {
                             quote! {
                                 #node.step((#(#args),*,))
                             }
@@ -365,12 +368,14 @@ impl ToTokens for Node {
                             quote! {
                                 #node.step(())
                             }
-                        };
-                        if *spawn {
-                            quoted_ty = quote! { JoinCache<#ty> };
-                            quote! { JoinCache::new(scope.spawn(move || #ts))}
-                        } else {
-                            ts
+                        }
+                    }
+                    EqKind::NodeCall {
+                        cell, spawn: true, ..
+                    } => {
+                        let node = format_ident!("cell_{}", cell);
+                        quote! {
+                            #node.join()
                         }
                     }
                     EqKind::Expr(e) | EqKind::CellExpr(e, _) => {
@@ -386,7 +391,6 @@ impl ToTokens for Node {
                 };
                 tokens.extend(quote! {
                     let mut #var: ::std::mem::MaybeUninit<#quoted_ty> = if #is_active {
-                        #force_args
                         ::std::mem::MaybeUninit::new(#ts)
                     } else {
                         ::std::mem::MaybeUninit::uninit()
@@ -408,6 +412,24 @@ impl ToTokens for Node {
                         }
                     };
                     tokens.extend(ts);
+                }
+                EqKind::NodeCall {
+                    args,
+                    cell,
+                    spawn: true,
+                    ..
+                } => {
+                    let node = format_ident!("cell_{}", cell);
+                    let ts = if args.len() >= 1 {
+                        quote! {
+                            #node.prepare((#(#args),*,));
+                        }
+                    } else {
+                        quote! {
+                            #node.prepare(());
+                        }
+                    };
+                    tokens.extend(ts)
                 }
                 _ => (),
             },
@@ -461,13 +483,27 @@ impl ToTokens for Node {
                 pub fn step(&mut self, input: #input_types) -> #ret_types {
                     #unpack
 
-                    ::std::thread::scope(|scope| {
-                        #compute
+                    #compute
 
-                        #save_cells
+                    #save_cells
 
-                        (#(#ret,)*)
-                    })
+                    (#(#ret,)*)
+
+                }
+            }
+
+            impl Node for #node_name {
+                type Arg = #input_types;
+                type Ret = #ret_types;
+
+                fn new() -> Self {
+                    Self::new()
+                }
+                fn reset(&mut self) {
+                    Self::reset(self)
+                }
+                fn step(&mut self, arg: Self::Arg) -> Self::Ret {
+                    Self::step(self, arg)
                 }
             }
         };
@@ -496,26 +532,77 @@ impl ToTokens for Ast {
             pub mod sync {
                 #imports
 
-                enum JoinCache<'scope, T> {
-                    Wait(::std::option::Option<::std::thread::ScopedJoinHandle<'scope, T>>),
-                    Finished(T),
+                trait Node {
+                    type Arg;
+                    type Ret;
+
+                    fn new() -> Self;
+                    fn reset(&mut self);
+                    fn step(&mut self, arg: Self::Arg) -> Self::Ret;
                 }
 
-                impl<'scope, T> JoinCache<'scope, T> {
-                    fn new(handle: ::std::thread::ScopedJoinHandle<'scope, T>) -> Self {
-                        Self::Wait(Some(handle))
-                    }
+                enum Command<T> {
+                    Reset,
+                    Step(T)
                 }
 
-                impl<'scope, T: Clone> JoinCache<'scope, T> {
-                    fn join(&mut self) -> T {
-                        match self {
-                            Self::Wait(opt) => {
-                                let t = opt.take().unwrap().join().unwrap(); // TODO: the last unwrap can panic
-                                *self = Self::Finished(t.clone());
-                                t
+                struct Handle<N: Node> {
+                    sender: ::std::sync::mpsc::SyncSender<Command<N::Arg>>,
+                    recv: ::std::sync::mpsc::Receiver<N::Ret>,
+                    last_result: Option<N::Ret>,
+                }
+
+                impl<N> Handle<N> where
+                    N: Node,
+                    N::Arg: Send + 'static,
+                    N::Ret: Clone + Send + 'static,
+                {
+                    fn new() -> Self {
+                        let (arg_sender, arg_receiver) = ::std::sync::mpsc::sync_channel(0);
+                        let (res_sender, res_receiver) = ::std::sync::mpsc::sync_channel(0);
+
+                        let thread = move || {
+                            let mut node = N::new();
+                            while let Ok(cmd) = arg_receiver.recv() {
+                                match cmd {
+                                    Command::Reset => node.reset(),
+                                    Command::Step(arg) => {
+                                        let res = node.step(arg);
+                                        let _ = res_sender.send(res); // if it returns an error, then there is no more receiver,
+                                        // and the next arg_receiver.recv() will also produce an error and exit the thread
+                                    }
+                                }
                             }
-                            Self::Finished(t) => t.clone()
+                        };
+
+                        ::std::thread::spawn(thread);
+
+                        Handle {
+                            sender: arg_sender,
+                            recv: res_receiver,
+                            last_result: None,
+                        }
+                    }
+                    fn reset(&mut self) {
+                        let _ = self.recv.recv(); // drop previous result
+                        self.sender.send(Command::Reset).unwrap();
+                        self.last_result = None;
+                    }
+                    fn prepare(&mut self, arg: <N as Node>::Arg) {
+                        self.last_result = None;
+                        self.sender.send(Command::Step(arg)).unwrap();
+                    }
+                    fn join(&mut self) -> <N as Node>::Ret {
+                        match self.last_result.take() {
+                            Some(res) => {
+                                self.last_result = Some(res.clone());
+                                res
+                            }
+                            None => {
+                                let res = self.recv.recv().unwrap();
+                                self.last_result = Some(res.clone());
+                                res
+                            }
                         }
                     }
                 }
