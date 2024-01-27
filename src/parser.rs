@@ -140,7 +140,10 @@ impl Types {
 
 impl Default for Types {
     fn default() -> Self {
-        BaseType::Unit.into()
+        Self {
+            types: SmallVec::new(),
+            clocks: Vec::new(),
+        }
     }
 }
 

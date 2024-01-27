@@ -30,8 +30,8 @@ sync! {
     #[export]
     node main() = ()
     where
-        a : bool = true -> pre spawn sleep1(),
-        b : bool = false -> pre spawn sleep2();
+        a : bool = true -> spawn sleep1(),
+        b : bool = false -> spawn sleep2();
 }
 
 fn main() {

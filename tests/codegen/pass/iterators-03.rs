@@ -7,7 +7,7 @@ sync! {
     node oui(c: bool) = (b)
     where
         b : int = merge c {
-            true => 1 -> 2 when c,
+            true => (1 -> 2) when c,
             false => 0 whennot c,
         };
 }
