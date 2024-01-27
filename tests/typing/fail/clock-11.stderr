@@ -1,0 +1,5 @@
+error: type mismatch: left has type `int`, right has type `int on b`
+  --> tests/typing/fail/clock-11.rs:12:19
+   |
+12 |         a : int = f(0 when b);
+   |                   ^^^^^^^^^^^

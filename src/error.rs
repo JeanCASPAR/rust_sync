@@ -3,9 +3,8 @@ use std::iter::once;
 use itertools::Itertools;
 use proc_macro2::{Ident, Span};
 use proc_macro_error::abort;
-use smallvec::smallvec as types;
 
-use crate::parser::{BaseType, ClockType, Type, Types, TypesFmt};
+use crate::parser::{BaseType, ClockType, Type, Types, Clocks, ClockFmt};
 
 #[derive(Debug)]
 pub struct Error {
@@ -53,8 +52,8 @@ impl Error {
         )
     }
 
-    pub fn type_mismatch(span: Span, left_type: Type, right_type: Type) -> Self {
-        Self::types_mismatch(span, types![left_type], types![right_type])
+    pub fn type_mismatch(span: Span, left_type: BaseType, right_type: BaseType) -> Self {
+        Self::new(ErrorKind::TypeMismatch { left_type, right_type }, span)
     }
 
     pub fn twice_var(name: String, def_span: Span, found_span: Span) -> Self {
@@ -91,7 +90,7 @@ impl Error {
         Self::new(ErrorKind::NoTuples { types }, span)
     }
 
-    pub fn argument_type_mismatch(span: Span, expected_type: Type, found_type: Type) -> Self {
+    pub fn argument_type_mismatch(span: Span, expected_type: BaseType, found_type: BaseType) -> Self {
         Self::new(
             ErrorKind::ArgumentTypeMismatch {
                 expected_type,
@@ -234,8 +233,8 @@ impl Error {
                 abort!(
                     self.span,
                     "type mismatch: `{}` and `{}`",
-                    left_type.type_format(),
-                    right_type.type_format()
+                    left_type,
+                    right_type,
                 )
             }
             ErrorKind::BoolArithmetic => {
@@ -258,8 +257,8 @@ impl Error {
                 abort!(
                     self.span,
                     "type mismatch: left has type `{}`, right has type `{}`",
-                    left_types.type_format(),
-                    right_types.type_format(),
+                    left_types,
+                    right_types,
                 )
             }
             ErrorKind::NonBoolCond => abort!(
@@ -280,7 +279,7 @@ impl Error {
             ErrorKind::NoTuples { types } => abort!(
                 self.span,
                 "tuples don't exist: {} is not a valid type...",
-                types.type_format(),
+                types,
             ),
             ErrorKind::MergeBranchOnBaseClock {
                 true_branch,
@@ -391,12 +390,29 @@ impl Error {
                 "found type `{}`, but a basic type was expected",
                 r#type,
             ),
+            ErrorKind::ClockMismatch { expected, found } => abort!(
+                self.span,
+                "expected clock type `{}`, found `{}`",
+                expected.display(),
+                found.display(),
+            ),
+            ErrorKind::TypeMismatch { left_type, right_type } => abort!(
+                self.span,
+                "type mistmatch: `{}` is different from `{}`",
+                left_type,
+                right_type,
+            ),
         }
     }
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum ErrorKind {
+    ClockMismatch {
+        expected: Clocks,
+        found: Clocks,
+    },
     UndefinedVariable {
         variable: String,
     },
@@ -413,6 +429,10 @@ pub enum ErrorKind {
     ThenTypeMismatch {
         left_type: Types,
         right_type: Types,
+    },
+    TypeMismatch {
+        left_type: BaseType,
+        right_type: BaseType,
     },
     TypesMismatch {
         left_types: Types,
@@ -463,8 +483,8 @@ pub enum ErrorKind {
         decl_span: Span,
     },
     ArgumentTypeMismatch {
-        expected_type: Type,
-        found_type: Type,
+        expected_type: BaseType,
+        found_type: BaseType,
     },
     WrongNumberOfArgument {
         expected: usize,

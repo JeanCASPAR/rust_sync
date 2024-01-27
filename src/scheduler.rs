@@ -45,22 +45,14 @@ pub struct Types {
 
 impl Types {
     fn from(types: PTypes, store: &mut StringPatriciaMap<SIdent>) -> Self {
-        let mut inner = SmallVec::with_capacity(types.len());
-        let mut clocks = Vec::new();
-        for ty in types {
-            inner.push(ty.base);
-            if !clocks.is_empty() {
-                // we suppose that all types have the same clocks in a tuple
-                // TODO: change when clocks are supported by types at typing
-                clocks.extend(
-                    ty.clocks
-                        .into_iter()
-                        .map(|clock| ClockType::from(clock, store)),
-                );
-            }
+        Self {
+            inner: types.types,
+            clocks: types
+                .clocks
+                .into_iter()
+                .map(|clock| ClockType::from(clock, store))
+                .collect(),
         }
-
-        Self { inner, clocks }
     }
 
     fn permut(&mut self, permutations: &mut [usize]) {
@@ -449,7 +441,7 @@ impl Context {
                     Box::new(Expr {
                         kind: ExprKind::Var(id),
                         ty: Types::from(
-                            PTypes::from_elem(BaseType::Bool.into(), 1),
+                            BaseType::Bool.into(),
                             &mut self.store,
                         ),
                     }),

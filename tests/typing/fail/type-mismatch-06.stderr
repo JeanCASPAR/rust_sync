@@ -1,4 +1,4 @@
-error: type mismatch: left has type `int`, right has type `unit`
+error: type mismatch: left has type `unit`, right has type `int`
   --> tests/typing/fail/type-mismatch-06.rs:12:14
    |
 12 |         () = f();

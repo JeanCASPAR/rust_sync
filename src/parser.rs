@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use proc_macro2::Span;
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 use std::fmt::Display;
 
 use patricia_tree::StringPatriciaMap;
@@ -41,6 +41,30 @@ impl Parse for BaseType {
     }
 }
 
+pub type Clocks = Vec<ClockType>;
+
+pub trait ClockFmt {
+    fn display<'a>(&'a self) -> ClocksFormat<'a>;
+}
+
+impl ClockFmt for Clocks {
+    fn display<'a>(&'a self) -> ClocksFormat<'a> {
+        ClocksFormat(self)
+    }
+}
+
+pub struct ClocksFormat<'a>(&'a [ClockType]);
+
+impl<'a> Display for ClocksFormat<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "base")?;
+        for clock in self.0 {
+            write!(f, " on {clock}")?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClockType {
     pub positive: bool,
@@ -52,7 +76,7 @@ pub struct Type {
     pub base: BaseType,
     /// `clock = vec![a, b, c]` means `base on a on b on c`, where `a`, `b` and `c` are
     /// `ClockType`s.
-    pub clocks: Vec<ClockType>,
+    pub clocks: Clocks,
 }
 
 impl Type {
@@ -65,28 +89,130 @@ impl Type {
     }
 }
 
-pub type Types = SmallVec<[Type; 1]>;
+pub type BasicTypes = SmallVec<[BaseType; 1]>;
 
-#[derive(Debug)]
-pub struct TypesFormat<'a>(&'a Types);
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct Types {
+    pub types: BasicTypes,
+    pub clocks: Vec<ClockType>,
+}
 
-impl<'a> Display for TypesFormat<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.0.is_empty() {
-            write!(f, "unit")
+pub struct TypesIterator<'a> {
+    types: &'a Types,
+    index: usize,
+}
+
+impl<'a> Iterator for TypesIterator<'a> {
+    type Item = Type;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(base_type) = self.types.types.get(self.index) {
+            self.index += 1;
+            Some(Type {
+                base: *base_type,
+                clocks: self.types.clocks.clone(),
+            })
         } else {
-            self.0.iter().format(" * ").fmt(f)
+            None
         }
     }
 }
 
-pub trait TypesFmt {
-    fn type_format(&self) -> TypesFormat<'_>;
+impl Types {
+    pub fn iter(&self) -> TypesIterator<'_> {
+        TypesIterator {
+            types: self,
+            index: 0,
+        }
+    }
+
+    pub fn get(&self, index: usize) -> Option<Type> {
+        if let Some(base_type) = self.types.get(index) {
+            Some(Type {
+                base: *base_type,
+                clocks: self.clocks.clone(),
+            })
+        } else {
+            None
+        }
+    }
 }
 
-impl TypesFmt for Types {
-    fn type_format(&self) -> TypesFormat<'_> {
-        TypesFormat(self)
+impl Default for Types {
+    fn default() -> Self {
+        BaseType::Unit.into()
+    }
+}
+
+impl From<Type> for Types {
+    fn from(value: Type) -> Self {
+        Self {
+            types: smallvec![value.base],
+            clocks: value.clocks,
+        }
+    }
+}
+
+impl FromIterator<Type> for Types {
+    fn from_iter<T: IntoIterator<Item = Type>>(iter: T) -> Self {
+        let mut clocks = None;
+        let iterator = iter.into_iter();
+        let (min_size, _) = iterator.size_hint();
+        let mut types = SmallVec::with_capacity(min_size);
+        for ty in iterator {
+            if let Some(ref c) = clocks {
+                if c != &ty.clocks {
+                    todo!("clock type error");
+                }
+            } else {
+                clocks = Some(ty.clocks)
+            }
+            types.push(ty.base);
+        }
+        Self {
+            types,
+            clocks: clocks.unwrap_or_default(),
+        }
+    }
+}
+
+impl Extend<Type> for Types {
+    fn extend<T: IntoIterator<Item = Type>>(&mut self, iter: T) {
+        for ty in iter {
+            if ty.clocks != self.clocks {
+                todo!("clock type error");
+            }
+            self.types.push(ty.base);
+        }
+    }
+}
+
+impl From<Vec<Type>> for Types {
+    fn from(value: Vec<Type>) -> Self {
+        value.into_iter().collect()
+    }
+}
+
+impl From<BaseType> for Types {
+    fn from(value: BaseType) -> Self {
+        Self {
+            types: smallvec![value],
+            clocks: Vec::new(),
+        }
+    }
+}
+
+impl Display for Types {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.types.is_empty() {
+            write!(f, "unit")?;
+        } else {
+            self.types.iter().format(" * ").fmt(f)?;
+        }
+        for clock in self.clocks.iter() {
+            write!(f, " on {clock}")?;
+        }
+        Ok(())
     }
 }
 
@@ -1247,9 +1373,7 @@ impl Parse for Node {
             if id.to_string() == "export" {
                 match export {
                     None => export = Some((i, attr.span())),
-                    Some((_, _)) => {
-                        return Err(input.error("Multiple #[export] attributes"))
-                    }
+                    Some((_, _)) => return Err(input.error("Multiple #[export] attributes")),
                 }
             }
         }

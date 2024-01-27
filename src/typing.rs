@@ -6,8 +6,8 @@ use syn::{Ident, Visibility};
 use crate::{
     error::Error,
     parser::{
-        BaseType, BoolBinOp, ClockType, CompOp, Decl as PDecl, DeclVar, Expr as PExpr, MathBinOp,
-        Module, Node as PNode, NodeParams, NodeType, Spanned, Type, Types,
+        BaseType, BasicTypes, BoolBinOp, ClockType, CompOp, Decl as PDecl, DeclVar, Expr as PExpr,
+        MathBinOp, Module, Node as PNode, NodeParams, NodeType, Spanned, Type, Types,
     },
 };
 
@@ -92,8 +92,7 @@ impl Node {
                         .get(node.name.to_string())
                         .unwrap()
                         .ret_types
-                        .iter()
-                        .cloned(),
+                        .iter(),
                 )
                 .collect(),
             name: node.name,
@@ -107,26 +106,12 @@ impl Node {
     }
 }
 
-trait Singleton {
-    fn singleton(&self, span: Span) -> Result<&Type, Error>;
-    fn into_singleton(self, span: Span) -> Result<Type, Error>;
-}
-
-impl Singleton for Types {
-    #[inline]
-    fn singleton(&self, span: Span) -> Result<&Type, Error> {
-        let [ref r#type] = self[..] else {
+impl Types {
+    pub fn singleton(&self, span: Span) -> Result<BaseType, Error> {
+        if self.types.len() != 1 {
             return Err(Error::no_tuples(span, self.clone()));
         };
-        Ok(r#type)
-    }
-
-    #[inline]
-    fn into_singleton(mut self, span: Span) -> Result<Type, Error> {
-        if self.len() != 1 {
-            return Err(Error::no_tuples(span, self.clone()));
-        };
-        Ok(self.swap_remove(0))
+        Ok(self.types[0])
     }
 }
 
@@ -144,35 +129,19 @@ impl Decl {
         extern_functions: &mut Vec<Ident>,
     ) -> Result<Self, Error> {
         let decl_span = decl.expr.span;
+        let decl_types = decl.vars.iter().map(|var| var.ty.clone()).collect();
         let expr = Expr::from_untyped(
             decl.expr,
             context,
             node_types,
-            Some(decl.vars.iter().map(|var| var.ty.clone()).collect()),
+            Some(decl.vars.iter().map(|var| var.ty.base).collect()),
             extern_functions,
         )?;
 
-        if expr.types.len() != decl.vars.len() {
-            return Err(Error::types_mismatch(
-                expr.span,
-                expr.types,
-                decl.vars.iter().map(|var| var.ty.clone()).collect(),
-            ));
+        if expr.types != decl_types {
+            return Err(Error::types_mismatch(expr.span, decl_types, expr.types));
         }
 
-        if let Some((_, expected_type, found_type)) = expr
-            .types
-            .iter()
-            .zip(decl.vars.iter())
-            .map(|(found_type, var)| (&var.id, &var.ty, found_type))
-            .find(|(_, expected_type, found_type)| expected_type != found_type)
-        {
-            return Err(Error::type_mismatch(
-                expr.span,
-                expected_type.clone(),
-                found_type.clone(),
-            ));
-        }
         Ok(Self {
             vars: decl.vars,
             expr: Spanned {
@@ -195,7 +164,7 @@ impl Expr {
         expr: Spanned<PExpr>,
         context: &Map<(Type, Span)>,
         node_types: &Map<NodeType>,
-        toplevel_types: Option<Types>,
+        inferred_type: Option<BasicTypes>,
         extern_functions: &mut Vec<Ident>,
     ) -> Result<Self, Error> {
         Self::do_stuff(
@@ -203,7 +172,7 @@ impl Expr {
             context,
             node_types,
             0,
-            toplevel_types,
+            inferred_type,
             extern_functions,
         )
     }
@@ -213,7 +182,7 @@ impl Expr {
         context: &Map<(Type, Span)>,
         node_types: &Map<NodeType>,
         first_index: u16,
-        toplevel_type: Option<Types>,
+        inferred_type: Option<BasicTypes>,
         extern_functions: &mut Vec<Ident>,
     ) -> Result<Self, Error> {
         let span = spanned_expr.span;
@@ -226,13 +195,13 @@ impl Expr {
                     .0
                     .clone();
                 Self {
-                    types: types![ty],
+                    types: ty.into(),
                     kind: ExprKind::Var(var),
                     span,
                 }
             }
             PExpr::Unit => Self {
-                types: types![BaseType::Unit.into()],
+                types: BaseType::Unit.into(),
                 kind: ExprKind::Unit,
                 span,
             },
@@ -245,7 +214,7 @@ impl Expr {
                     context,
                     node_types,
                     first_index - 1,
-                    None,
+                    inferred_type,
                     extern_functions,
                 )?;
                 Self {
@@ -260,7 +229,7 @@ impl Expr {
                     context,
                     node_types,
                     first_index,
-                    None,
+                    inferred_type.clone(),
                     extern_functions,
                 )?;
                 let tail_expr = Self::do_stuff(
@@ -268,7 +237,7 @@ impl Expr {
                     context,
                     node_types,
                     first_index + 1,
-                    None,
+                    inferred_type,
                     extern_functions,
                 )?;
                 if head_expr.types != tail_expr.types {
@@ -290,7 +259,7 @@ impl Expr {
                 let typed_e =
                     Self::do_stuff(*e, context, node_types, first_index, None, extern_functions)?;
                 let e_type = typed_e.types.singleton(e_span)?;
-                if e_type.base == BaseType::Bool {
+                if e_type == BaseType::Bool {
                     return Err(Error::bool_arithmetic(span));
                 }
                 Self {
@@ -301,10 +270,16 @@ impl Expr {
             }
             PExpr::Not(_, e) => {
                 let e_span = e.span;
-                let typed_e =
-                    Self::do_stuff(*e, context, node_types, first_index, None, extern_functions)?;
+                let typed_e = Self::do_stuff(
+                    *e,
+                    context,
+                    node_types,
+                    first_index,
+                    Some(types![BaseType::Bool.into()]),
+                    extern_functions,
+                )?;
                 let e_type = typed_e.types.singleton(e_span)?;
-                if e_type.base != BaseType::Bool {
+                if e_type != BaseType::Bool {
                     return Err(Error::number_logic(span));
                 }
                 Self {
@@ -335,14 +310,14 @@ impl Expr {
                 )?;
                 let right_type = typed_right.types.singleton(right_span)?;
                 if left_type != right_type {
-                    return Err(Error::type_mismatch(
+                    return Err(Error::types_mismatch(
                         span,
-                        left_type.clone(),
-                        right_type.clone(),
+                        typed_left.types,
+                        typed_right.types,
                     ));
                 }
 
-                if left_type.base == BaseType::Bool {
+                if left_type == BaseType::Bool {
                     return Err(Error::bool_arithmetic(span));
                 }
                 Self {
@@ -383,13 +358,13 @@ impl Expr {
                 )?;
                 let cond_type = typed_cond.types.singleton(cond_span)?;
                 if then_type != else_type {
-                    return Err(Error::type_mismatch(
+                    return Err(Error::types_mismatch(
                         span,
-                        then_type.clone(),
-                        else_type.clone(),
+                        typed_then.types,
+                        typed_else.types,
                     ));
                 }
-                if cond_type.base != BaseType::Bool {
+                if cond_type != BaseType::Bool {
                     return Err(Error::non_bool_cond(span));
                 }
 
@@ -404,17 +379,17 @@ impl Expr {
                 }
             }
             PExpr::Int(i, _) => Self {
-                types: types![BaseType::Int64.into()],
+                types: BaseType::Int64.into(),
                 kind: ExprKind::Int(i),
                 span,
             },
             PExpr::Float(f, _) => Self {
-                types: types![BaseType::Float64.into()],
+                types: BaseType::Float64.into(),
                 kind: ExprKind::Float(f),
                 span,
             },
             PExpr::Bool(b, _) => Self {
-                types: types![BaseType::Bool.into()],
+                types: BaseType::Bool.into(),
                 kind: ExprKind::Bool(b),
                 span,
             },
@@ -427,18 +402,18 @@ impl Expr {
                     None,
                     extern_functions,
                 )?;
-                let clocks = match typed_casted.types.singleton(span)? {
-                    Type {
-                        base: BaseType::Int64,
-                        clocks,
-                    } => clocks,
-                    ty => return Err(Error::float_cast(span, ty.clone())),
+                if typed_casted.types.singleton(span)? != BaseType::Int64 {
+                    return Err(Error::float_cast(
+                        span,
+                        typed_casted.types.get(0).unwrap().clone(),
+                    ));
                 };
                 Self {
-                    types: types![Type {
+                    types: Type {
                         base: BaseType::Float64,
-                        clocks: clocks.clone(),
-                    }],
+                        clocks: typed_casted.types.clocks.clone(),
+                    }
+                    .into(),
                     kind: ExprKind::FloatCast(Box::new(typed_casted)),
                     span,
                 }
@@ -459,12 +434,13 @@ impl Expr {
                 let typed_e =
                     Self::do_stuff(*e, context, node_types, first_index, None, extern_functions)?;
                 let mut types = typed_e.types.clone();
-                for e_type in types.iter_mut() {
-                    e_type.clocks.push(ClockType {
-                        positive: true,
-                        clock: clock.clone(),
-                    })
+                if types.clocks != clock_type.clocks {
+                    todo!("clock type error");
                 }
+                types.clocks.push(ClockType {
+                    positive: true,
+                    clock: clock.clone(),
+                });
                 Self {
                     types,
                     kind: ExprKind::When(Box::new(typed_e), clock),
@@ -487,12 +463,13 @@ impl Expr {
                 let typed_e =
                     Self::do_stuff(*e, context, node_types, first_index, None, extern_functions)?;
                 let mut types = typed_e.types.clone();
-                for e_type in types.iter_mut() {
-                    e_type.clocks.push(ClockType {
-                        positive: false,
-                        clock: clock.clone(),
-                    })
+                if types.clocks != clock_type.clocks {
+                    todo!("clock type error");
                 }
+                types.clocks.push(ClockType {
+                    positive: false,
+                    clock: clock.clone(),
+                });
                 Self {
                     types,
                     kind: ExprKind::WhenNot(Box::new(typed_e), clock),
@@ -522,11 +499,11 @@ impl Expr {
                 let e_true_type = typed_e_true.types.singleton(e_true_span)?;
                 let e_false_type = typed_e_false.types.singleton(e_false_span)?;
 
-                if e_true_type.base != e_false_type.base {
+                if e_true_type != e_false_type {
                     return Err(Error::type_mismatch(
                         span,
-                        e_true_type.clone(),
-                        e_false_type.clone(),
+                        e_true_type,
+                        e_false_type,
                     ));
                 }
 
@@ -534,7 +511,7 @@ impl Expr {
                     return Err(Error::undef_var(&clock));
                 };
 
-                let [true_start @ .., true_last] = &e_true_type.clocks[..] else {
+                let [true_start @ .., true_last] = &typed_e_true.types.clocks[..] else {
                     return Err(Error::merge_branch_on_base_clock(
                         e_true_span,
                         true,
@@ -543,7 +520,7 @@ impl Expr {
                     ));
                 };
 
-                let [false_start @ .., false_last] = &e_false_type.clocks[..] else {
+                let [false_start @ .., false_last] = &typed_e_false.types.clocks[..] else {
                     return Err(Error::merge_branch_on_base_clock(
                         e_false_span,
                         false,
@@ -609,11 +586,11 @@ impl Expr {
                 }
 
                 let merge_type = Type {
-                    base: e_true_type.base,
+                    base: e_true_type,
                     clocks: clock_type.clocks.clone(),
                 };
                 Self {
-                    types: types![merge_type],
+                    types: merge_type.into(),
                     kind: ExprKind::Merge(clock, Box::new(typed_e_true), Box::new(typed_e_false)),
                     span,
                 }
@@ -648,34 +625,52 @@ impl Expr {
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                let clocks = {
+                    let mut clock = None;
+
+                    for (expr, _span) in typed_args.iter() {
+                        if let Some(ref c) = clock {
+                            if c != &expr.types.clocks {
+                                todo!("clock type error");
+                            }
+                        } else {
+                            clock = Some(expr.types.clocks.clone());
+                        }
+                    }
+
+                    clock.unwrap_or_default()
+                };
                 let (ty, extern_symbol) = if let Some(node_type) = node_types.get(&f_symb) {
-                    if typed_args.len() != node_type.arg_types.len() {
+                    if typed_args.len() != node_type.arg_types.types.len() {
                         return Err(Error::wrong_number_of_arguments(
                             span,
                             f_symb,
-                            node_type.arg_types.len(),
+                            node_type.arg_types.types.len(),
                             typed_args.len(),
                         ));
                     }
 
                     if let Some(((expr, expr_span), typ)) = typed_args
                         .iter()
-                        .zip(node_type.arg_types.iter())
+                        .zip(node_type.arg_types.types.iter())
                         .find(|&((found_expr, _), expected_type)| {
-                            found_expr.types.len() != 1 || found_expr.types[0] != *expected_type
+                            found_expr.types.types.len() != 1
+                                || found_expr.types.types[0] != *expected_type
                         })
                     {
                         let expr_type = expr.types.singleton(*expr_span)?;
-                        return Err(Error::argument_type_mismatch(
-                            *expr_span,
-                            typ.clone(),
-                            expr_type.clone(),
-                        ));
+                        return Err(Error::argument_type_mismatch(*expr_span, *typ, expr_type));
                     }
 
                     (node_type.ret_types.clone(), false)
-                } else if let Some(ty) = toplevel_type {
-                    (ty, true)
+                } else if let Some(ty) = inferred_type {
+                    (
+                        Types {
+                            types: ty,
+                            clocks: Vec::new(),
+                        },
+                        true,
+                    )
                 } else {
                     return Err(Error::external_symbol_not_toplevel(f.span(), f_symb));
                 };
@@ -689,7 +684,7 @@ impl Expr {
                 }
 
                 Self {
-                    types: ty,
+                    types: Types { clocks, ..ty },
                     kind: ExprKind::FunCall {
                         function: f,
                         arguments: typed_args.into_iter().map(|(x, _)| x).collect(),
@@ -721,24 +716,24 @@ impl Expr {
                 let left_type = typed_left.types.singleton(left_span)?;
                 let right_type = typed_right.types.singleton(right_span)?;
 
-                if left_type.base != BaseType::Bool {
+                if left_type != BaseType::Bool {
                     return Err(Error::number_logic(left_span))?;
                 }
 
-                if right_type.base != BaseType::Bool {
+                if right_type != BaseType::Bool {
                     return Err(Error::number_logic(right_span))?;
                 }
 
-                if left_type.clocks != right_type.clocks {
-                    return Err(Error::type_mismatch(
+                if typed_left.types != typed_right.types {
+                    return Err(Error::types_mismatch(
                         span,
-                        left_type.clone(),
-                        right_type.clone(),
+                        typed_left.types,
+                        typed_right.types,
                     ));
                 }
 
                 Self {
-                    types: types![left_type.clone()],
+                    types: typed_left.types.clone(),
                     kind: ExprKind::BoolBinOp(Box::new(typed_left), op, Box::new(typed_right)),
                     span,
                 }
@@ -774,15 +769,16 @@ impl Expr {
                     ));
                 }
 
-                if !generic_op && matches!(left_type.base, BaseType::Bool | BaseType::Unit) {
+                if !generic_op && matches!(left_type, BaseType::Bool | BaseType::Unit) {
                     return Err(Error::bool_arithmetic(span));
                 }
 
                 Self {
-                    types: types![Type {
+                    types: Type {
                         base: BaseType::Bool,
-                        clocks: left_type.clocks.clone(),
-                    }],
+                        clocks: typed_left.types.clocks.clone(),
+                    }
+                    .into(),
                     kind: ExprKind::CompOp(Box::new(typed_left), op, Box::new(typed_right)),
                     span,
                 }
