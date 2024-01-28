@@ -28,8 +28,39 @@
 \subsection{\texttt{pre} et \texttt{->}}
 
 \section{Ordonnancement}
+Pour l'ordonnancement, on génère une équation pour chaque sous-expression.
+De plus, on génère le graphe de dépendances entre les équations.
+
+Il y a plusieurs types d'équations: les équations qui calculent une variable, les appels
+de fonctions externes et les appels de n\oe{}uds, avec ou sans \texttt{spawn}. De plus,
+il y a également un type d'équation spécial pour stocker l'entrée du n\oe{}ud, ainsi qu'un
+autre type spécial pour effectuer stocker les résultats des expressions avec un \texttt{pre}
+dans la mémoire. On parcourt ensuite le graphe des dépendances pour ordonner les équations, et s'il y
+a un cycle on lève une erreur. On parcourt également le graphe des appels entre n\oe{}ud pour interdire les
+appels récursifs de n\oe{}uds.
 
 \section{Génération de code}
+
+Pour la génération de code, on génère une variable dans la fonction \texttt{step}
+pour chaque équation, et on ajoute un membre à la structure représentant un n\oe{}ud
+pour chaque élément qui doit rester en mémoire d'un appel à l'autre: les résultats des
+expressions avec \texttt{pre}, et les n\oe{}uds instanciés, avec ou sans \texttt{spawn}.
+
+Cette variable a pour type \texttt{MaybeUninit}, qui représente une zone mémoire
+qui n'est potentiellement pas initialisée. Il est interdit de lire
+une telle zone mémoire si l'on est pas sûr que la mémoire est initialisée,
+mais deux mécanismes permettent de s'assurer que c'est le cas. D'une part, chaque
+équation possède une liste d'horloge, ajoutée au typage, qui spécifie quand cette équation
+doit s'exécuter. De plus, elle possède une liste d'indices et de booléens qui correspond à des équations de
+la forme \texttt{x = a -> b}. Pour une telle équation, on génère une variable booléenne (que l'on garde en mémoire)
+qui vaut \texttt{true} si et seulement si c'est la première fois que l'équation s'exécute.
+Une équation qui correspond à une sous-expression de \texttt{a} référencera l'indice de \texttt{x}
+avec le booléen \texttt{true}, tandis qu'une sous-expression de \texttt{c} aura le booléen \texttt{false}.
+
+Ainsi, lorsqu'on exécute une équation, on vérifie que si elle apparaît comme sous-équation
+d'un ou plusieurs \texttt{->}, elle fait partie d'une branche qui doit s'exécuter, et que toutes ses horloges
+valent \texttt{true}. Dans le cas contraire, la variable correspondante n'est pas initialisée. Le typage
+de Rustre nous permet d'être sûr de ne pas lire une variable non initialisée.
 
 \pagebreak
 \appendix
@@ -48,53 +79,31 @@
 
   <equation> ::= <ident> `:' <type> `=' <expr>
 
-  <expr> ::= <e0>
-
-  <e0> ::= <e1> `when' <ident>
-  \alt <e1> `whennot' <ident>
-  \alt <e1>
-
-  <e1> ::= <e2> `->' <e1>
-  \alt <e2>
-
-  <e2> ::= <e2> `+' <e3>
-  \alt <e1> `-' <e3>
-  \alt <e3>
-
-  <e3> ::= <e3> `*' <e4>
-  \alt <e2> `/' <e4>
-  \alt <e2> `\%' <e4>
-  \alt <e4>
-
-  <e4> ::= `-' <e5>
+  <expr> ::= <expr> `when' <ident>
+  \alt <expr> `whennot' <ident>
+  \alt <expr> `->' <expr>
+  \alt <expr> `+' <expr>
+  \alt <expr> `-' <expr>
+  \alt <expr> `*' <expr>
+  \alt <expr> `/' <expr>
+  \alt <expr> `\%' <expr>
+  \alt `-' <expr>
   \alt `pre' <e5>
-  \alt <e5>
-
-  <e5> ::= <e6> `as' `float'
-  \alt <e6>
-
-  <e6> ::= <e7> `>=' <e7>
-  \alt <e7> `>' <e7>
-  \alt <e7> `<=' <e7>
-  \alt <e7> `<' <e7>
-  \alt <e7> `==' <e7>
-  \alt <e7> `!=' <e7>
-  \alt <e7>
-
-  <e7> ::= `!' <e8>
-  \alt <e8>
-
-  <e8> ::= <e8> `&&' <e9>
-  \alt <e9>
-
-  <e9> ::= <e9> `||' <e10>
-  \alt <e10>
-
-  <e10> ::= <literal>
+  \alt <expr> `as' `float'
+  \alt <expr> `>=' <expr>
+  \alt <expr> `>' <expr>
+  \alt <expr> `<=' <expr>
+  \alt <expr> `<' <expr>
+  \alt <expr> `==' <expr>
+  \alt <expr> `!=' <expr>
+  \alt `!' <expr>
+  \alt <expr> `&&' <expr>
+  \alt <expr> `||' <expr>
+  \alt <literal>
   \alt <ident>
-  \alt `spawn'$^?$ <ident> `(' (<e0>)${}^*_,$ `)'
-  \alt `if' <e0> `{' <e0> `}' `else' `{' <e0> `}'
-  \alt `merge' <ident> `{' (<bool> => `expr')${}^*_,$ `}'
+  \alt `spawn'$^?$ <ident> `(' (<expr>)${}^*_,$ `)'
+  \alt `if' <expr> `{' <expr> `}' `else' `{' <expr> `}'
+  \alt `merge' <ident> `{' (<bool> => <expr>)${}^*_,$ `}'
   \alt `(' <expr> `)'
 
   <type> ::= `int'
