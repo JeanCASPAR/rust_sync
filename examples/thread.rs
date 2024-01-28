@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{time::{Duration, Instant}, iter::repeat};
 
 use rustre::sync;
 
@@ -35,10 +35,11 @@ sync! {
 }
 
 fn main() {
-    let mut it = sync::main(std::iter::repeat(()));
-    for _ in 0..3 {
-        let now = std::time::Instant::now();
-        let _ = it.next().unwrap();
+    let mut now = Instant::now();
+    // `repeat(x)` renvoie le stream `x x x...`
+    // `s.take(n)` renvoie le stream `s` tronqué à ses `n` premières valeurs
+    for _ in sync::main(repeat(())).take(3) {
         println!("It took {:?}", now.elapsed());
+        now = Instant::now();
     }
 }
