@@ -5,65 +5,245 @@
 \usepackage[french]{babel}
 \usepackage{microtype}
 \usepackage{syntax}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{minted}
+\usepackage{subcaption}
 
 \title{Rustre}
 \subtitle{Rustre = Rust + Lustre}
 \author{Jean \textsc{Caspar} \and Adrien \textsc{Mathieu}}
 \date{January 29, 2023}
 
+\DeclareMathOperator{\mspawn}{spawn}
+\DeclareMathOperator{\mpre}{pre}
+\DeclareMathOperator{\tint}{int}
+\DeclareMathOperator{\tfloat}{float}
+\DeclareMathOperator{\tbool}{bool}
+
+\newcommand{\keyword}[1]{{\textcolor{green!50!black}{\textbf{#1}}}}
+\newcommand{\type}[1]{\textcolor{blue}{#1}}
+\newcommand{\node}{\keyword{node}}
+\newcommand{\pre}{\keyword{pre}}
+\newcommand{\where}{\keyword{where}}
+\newcommand{\when}{\keyword{when}}
+\newcommand{\merge}{\keyword{merge}}
+\newcommand{\rif}{\keyword{if}}
+\newcommand{\relse}{\keyword{else}}
+\newcommand{\whennot}{\keyword{whennot}}
+\newcommand{\true}{\keyword{true}}
+\newcommand{\spawn}{\keyword{spawn}}
+\newcommand{\false}{\keyword{false}}
+\newcommand{\extern}{\keyword{extern}}
+\renewcommand{\int}{\type{int}}
+\newcommand{\bool}{\type{bool}}
+\newcommand{\float}{\type{float}}
+\newcommand{\on}{\type{on}}
+\newcommand{\as}{\keyword{as}}
+
+\newlength{\figwidth}
+\newsavebox{\rulebox}
+\newcommand{\typerule}[2]{%
+  \savebox{\rulebox}{$\displaystyle\frac{#1}{#2}$}
+  \settowidth{\figwidth}{\usebox{\rulebox}}
+  \begin{subcaption}{\the\figwidth}
+    \usebox{\rulebox}
+  \end{subcaption}
+}
+
 \begin{document}
 \maketitle{}
 \tableofcontents
+\pagebreak
 
 \section*{Introduction}
+Rustre est un DSL de Lustre dans Rust. Il permet d'écrire du code Lustre dans un programme Rust,
+en laissant la possibilité de faire des appels transparents depuis Lustre vers Rust et
+vice-versa.
+
+Des exemples sont disponibles dans le dossier \texttt{examples}, et peuvent être executés avec
+\texttt{cargo run -{}-example \textit{exemple}}.
 
 \section{Analyse syntaxique}
+L'analyse syntaxique de Rustre s'appuie sur le flux de lexèmes fournit par Rust. Ce flux ne
+présage pas des lexèmes utilisés par Rustre, c'est-à-dire qu'il ne force pas Rustre à utiliser
+les mêmes lexèmes que Rust. En revanche, Rust fournit directement des informations de
+positionnement des lexèmes, et ces mêmes informations sont réutilisées par Rustre pour fournir à
+son tour un flux de lexèmes sortant où les lexèmes sont correctement annotés, de sorte que les
+messages d'erreur de Rust peuvent remonter à l'origine du problème dans le code source du
+programmeur (et pas dans le code généré).
+
+En annexe est fournit la syntaxe de Rustre. La syntaxe fournit correspond à une version lisible,
+contrairement à celle dans le code source qui a été transformée de sorte à être LL(1).
 
 \section{Typage}
+Rustre utilise trois systèmes de type, comme Lustre, pour garantir la correction du code.
+Cependant, Rustre n'accepte qu'un sous-ensemble très simple des programmes Lustre du point de vue
+du typage, car il ne supporte pas:
+\begin{itemize}
+\item les types dépendants, pour le système de types d'horloge;
+\item le sous-typage;
+\item le polymorphisme.
+\end{itemize}
 \subsection{Types de base}
-\subsubsection{}
+\subsubsection{Types de Rustre}
+Rustre fournit trois types de base, à savoir
+\begin{itemize}
+\item \(\tint\)
+\item \(\tfloat\)
+\item \(\tbool\)
+\end{itemize}
+et permet de convertir un entier en un flottant avec \(e\ \as\ \float\) si \(e:\int\).
+
+\subsubsection{Typage}
+Le typage s'effectue en vérifiant que le type d'une variable correspond bien au type de
+l'expression qu'on essaye de lui assigner. Comme tous les littéraux ont un unique type possible,
+et que le type de toutes les variables (donc les types de retour des n\oe{}uds) sont
+explicitement déclarées, ce n'est qu'une simple vérification: aucun mécanisme d'inférence de type
+n'est nécessaire.
+
+La seule exception est pour l'appel à des fonctions de Rust. La compilation de Rustre se faisant
+pendant la phase d'analyse syntaxique du code Rust, il est impossible d'obtenir des informations
+de typage sur ces fonctions. Or, il arrive que ces informations soient nécessaires, comme dans
+le cas suivant
+\begin{minted}[frame=lines,escapeinside=@@]{text}
+@\node@ main() = (x)
+@\where@
+    x : @\int@ = g(f(1) -> @\pre@ f(2));
+\end{minted}
+En effet, Rustre doit générer une déclaration d'un type contenant la mémoire utilisée par le
+\pre{}. Rustre impose donc qu'il existe une annotation de type explicite pour la valeur de retour
+d'un appel de fonction externe. Comme les seules annotations de type sont au niveau des
+déclarations de variables, il est nécessaire de nommer ces expressions intermédiaires:
+\begin{minted}[frame=lines,escapeinside=@@]{text}
+@\node@ main() = (x)
+@\where@
+    y : @\bool@ = f(1) -> @\pre@ f(2),
+    x : @\int@ = g(y);
+\end{minted}
+À noter que ce n'est pas la valeur de retour de chaque appel à une fonction qui est nommé, ce qui
+est permit par de l'inférence de type très basique.
+
+Par ailleurs, Rustre ne permet pas de polymorphisme pour les types de base.
+
+\subsubsection{Polymorphisme de Rust}
+Rustre ne vérifie pas la cohérence des types des fonctions externes:
+\begin{minted}[frame=lines,escapeinside=@@]{text}
+@\node@ main() = ()
+@\where@
+    x : @\bool@ = f(true),
+    y : @\int@ = f(3);
+\end{minted}
+En effet, il est possible que ces expressions soient bien typées, par exemple si \(f\) est
+définie comme suit
+\begin{minted}[frame=lines]{rust}
+fn f<T>(x: T) -> T {
+    x
+}
+\end{minted}
+ce qui permet effectivement d'utiliser le polymorphisme de Rust en Rustre.
 
 \subsection{Horloges}
+Le système de type d'horloge est définie comme suit
+\begin{align*}
+  \kappa ::=&\; \textrm{base}\\
+  |&\; \kappa\ \textrm{on}\; v & \textrm{où }v : \textrm{\bool}^\kappa\\
+  |&\; \kappa\ \textrm{on}\; !v & \textrm{où }v : \textrm{\bool}^\kappa
+\end{align*}
+où l'on note \(e : \tau^\kappa\) si \(e\) a le type de base \(\tau\) et le type d'horloge
+\(\kappa\).
 
-\subsection{\texttt{pre} et \texttt{->}}
+L'égalité entre types d'horloge est résolue de façon purement syntaxique, ie. aucun effort n'est
+fait pour déterminer si deux expressions booléennes sont sémantiquement équivalentes.
+
+Par ailleurs, les types dépendants dans les signatures de n\oe{}uds sont interdits par Rustre, ce
+qui empêche de factoriser du code. Par exemple, ce n\oe{}ud, qui pourrait être utile, ne peut pas
+être définit:
+\begin{minted}[frame=lines,escapeinside=@@]{text}
+@\node@ ou_alors(c : @\bool@, x : @\int@ @\on@ c, v : @\int@) = (o)
+@\where@
+    o : @\int@ = @\merge@ c {
+        @\true@ => x,
+        @\false@ => v @\whennot@ c,
+    };
+\end{minted}
+
+\subsection{Type d'accès}
+Pour vérifier qu'aucun accès à une valeur non définie n'est effectué, chaque expression a un type
+d'accès \(n\in\mathbb{N}\), qui signifie que l'expression est définie à partir de la \(n\)-ème
+itération. Rustre impose que toutes les variables puissent être typées avec le type d'accès
+\(0\), c'est-à-dire que les variables soient toujours bien définies.
+
+Cette règle est plus restrictive que de demander que les variables de retour d'un n\oe{}ud soient
+toujours définies, mais la vérification se fait plus facilement.
 
 \section{Ordonnancement}
 Pour l'ordonnancement, on génère une équation pour chaque sous-expression.
 De plus, on génère le graphe de dépendances entre les équations.
 
-Il y a plusieurs types d'équations: les équations qui calculent une variable, les appels
-de fonctions externes et les appels de n\oe{}uds, avec ou sans \texttt{spawn}. De plus,
-il y a également un type d'équation spécial pour stocker l'entrée du n\oe{}ud, ainsi qu'un
-autre type spécial pour effectuer stocker les résultats des expressions avec un \texttt{pre}
-dans la mémoire. On parcourt ensuite le graphe des dépendances pour ordonner les équations, et s'il y
-a un cycle on lève une erreur. On parcourt également le graphe des appels entre n\oe{}ud pour interdire les
-appels récursifs de n\oe{}uds.
+Il y a plusieurs types d'équations: les équations qui calculent une variable, les appels de
+fonctions externes et les appels de n\oe{}uds, avec ou sans \(\mspawn\). De plus, il y a
+également un type d'équation spécial pour stocker l'entrée du n\oe{}ud, ainsi qu'un autre type
+spécial pour effectuer stocker les résultats des expressions avec un \(\mpre\) dans la
+mémoire. On parcourt ensuite le graphe des dépendances pour ordonner les équations, et s'il y a
+un cycle on lève une erreur. On parcourt également le graphe des appels entre n\oe{}ud pour
+interdire les appels récursifs de n\oe{}uds.
 
 \section{Génération de code}
 
-Pour la génération de code, on génère une variable dans la fonction \texttt{step}
-pour chaque équation, et on ajoute un membre à la structure représentant un n\oe{}ud
-pour chaque élément qui doit rester en mémoire d'un appel à l'autre: les résultats des
-expressions avec \texttt{pre}, et les n\oe{}uds instanciés, avec ou sans \texttt{spawn}.
+\subsection{Non initialisation avec les \pre}
+Pour la génération de code, on génère une variable dans la fonction \texttt{step} pour chaque
+équation, et on ajoute un membre à la structure représentant un n\oe{}ud pour chaque élément qui
+doit rester en mémoire d'un appel à l'autre: les résultats des expressions avec \(\mpre\), et
+les n\oe{}uds instanciés, avec ou sans \(\mspawn\).
 
-Cette variable a pour type \texttt{MaybeUninit}, qui représente une zone mémoire
-qui n'est potentiellement pas initialisée. Il est interdit de lire
-une telle zone mémoire si l'on est pas sûr que la mémoire est initialisée,
-mais deux mécanismes permettent de s'assurer que c'est le cas. D'une part, chaque
-équation possède une liste d'horloge, ajoutée au typage, qui spécifie quand cette équation
-doit s'exécuter. De plus, elle possède une liste d'indices et de booléens qui correspond à des équations de
-la forme \texttt{x = a -> b}. Pour une telle équation, on génère une variable booléenne (que l'on garde en mémoire)
-qui vaut \texttt{true} si et seulement si c'est la première fois que l'équation s'exécute.
-Une équation qui correspond à une sous-expression de \texttt{a} référencera l'indice de \texttt{x}
-avec le booléen \texttt{true}, tandis qu'une sous-expression de \texttt{c} aura le booléen \texttt{false}.
+Cette variable a pour type \texttt{MaybeUninit}, qui représente une zone mémoire qui n'est
+potentiellement pas initialisée. Il est interdit de lire une telle zone mémoire si l'on est pas
+sûr que la mémoire est initialisée, mais deux mécanismes permettent de s'assurer que c'est le
+cas. D'une part, chaque équation possède une liste d'horloge, ajoutée au typage, qui spécifie
+quand cette équation doit s'exécuter. De plus, elle possède une liste d'indices et de booléens
+qui correspond à des équations de la forme \texttt{x = a -> b}. Pour une telle équation, on
+génère une variable booléenne (que l'on garde en mémoire) qui vaut \true{} si et seulement
+si c'est la première fois que l'équation s'exécute.  Une équation qui correspond à une
+sous-expression de \texttt{a} référencera l'indice de \texttt{x} avec le booléen \true,
+tandis qu'une sous-expression de \texttt{c} aura le booléen \false.
 
-Ainsi, lorsqu'on exécute une équation, on vérifie que si elle apparaît comme sous-équation
-d'un ou plusieurs \texttt{->}, elle fait partie d'une branche qui doit s'exécuter, et que toutes ses horloges
-valent \texttt{true}. Dans le cas contraire, la variable correspondante n'est pas initialisée. Le typage
-de Rustre nous permet d'être sûr de ne pas lire une variable non initialisée.
+Ainsi, lorsqu'on exécute une équation, on vérifie que si elle apparaît comme sous-équation d'un
+ou plusieurs \texttt{->}, elle fait partie d'une branche qui doit s'exécuter, et que toutes ses
+horloges valent \true. Dans le cas contraire, la variable correspondante n'est pas
+initialisée. Le typage de Rustre nous permet d'être sûr de ne pas lire une variable non
+initialisée.
+
+Une subtilité est que l'invariant interne dans la génération de code est qu'une variable qui
+possède la valeur \texttt{MaybeUninit::uninit} (c'est-à-dire, qui n'est pas initialisée) n'est
+jamais utilisée pour faire des calculs. Cependant, une variable non initialisée peut être copiée
+dans une autre variable non utilisée. Or, \texttt{a = b} est un comportement non défini en Rust
+si \(a\) est non initialisée (car Rust voudrait alors appeler le destructeur de la valeur en
+\(a\), ce qui pourrait libérer de la mémoire en lisant le contenu de \(a\), qui est non
+initialisée). Pour cela, on utilise des primitives plus bas niveau \texttt{std::ptr::read} et
+\texttt{std::ptr::write}, qui sont \texttt{unsafe}.
+
+\subsection{Sémantique de \(\mspawn\)}
+\(\mspawn f(x)\) a la même sémantique que \(\mpre f(x)\), mais le calcul de
+\(f(x)\) s'exécute sur un nouveau fil d'exécution. Le système de type de Rust garantie que cette
+exécution en parallèle est sûre, au sens où elle ne peut pas provoquer de data race.
+
+\(\mspawn f(x)\) est équivalent à \(\mpre f(x)\), et non à \(f(x)\), car ainsi le cycle où l'on a
+besoin d'obtenir la valeur de \(f(x)\) n'est pas le même que celui où l'on dispose de la valeur
+de \(x\) (et donc où l'on peut lancer le calcul de \(f(x)\)).
+
+\subsection{Sémantique paresseuse}
+Lustre est un langage pure; en tant que tel, il ne précise si certaines expressions doivent être
+calculées si elles ne sont ensuite pas utilisées, car ça ne changerait rien au résultat. Rustre,
+d'un autre côté, permet des appels à des fonctions Rust quelconques, ce qui pourrait avoir des
+effets de bord. Pour des opérateurs comme \(e_1 \texttt{->} e_2\), il faut donc choisir si
+\(e_1\) est évaluée à chaque itération ou uniquement à la première, c'est-à-dire, est-ce que
+l'opérateur \texttt{->} est paresseux. Nous avons choisi de traiter cet opérateur de façon
+paresseuse.
 
 \pagebreak
 \appendix
+\noindent{\huge Annexe}
 
 \section{Grammaire de Rustre}
 \begin{grammar}
@@ -110,4 +290,11 @@ de Rustre nous permet d'être sûr de ne pas lire une variable non initialisée.
   \alt `float'
   \alt `bool'
 \end{grammar}
+
+% \section{Règles de typage}
+% \begin{figure}[h]
+%   \centering
+%   \typerule{}{\Gamma,x:\tau\vdash x:\tau}
+%   \typerule{\Gamma\vdash e_1:\tint\qquad \Gamma\vdash e_2:\tint\hskip\qquad o\in\{+,*,-,\%,/\}}{\Gamma\vdash e_1 o e_2:\tint}
+% \end{figure}
 \end{document}
