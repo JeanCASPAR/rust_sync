@@ -5,7 +5,7 @@ build:
 	@cargo build
 .PHONY: build
 
-clear:
-	@cargo clear
+clean:
+	@cargo clean
 	@$(RM) **/*.{aux,log,out,nav,snm,toc,vrb}
-.PHONY: clear
+.PHONY: clean
