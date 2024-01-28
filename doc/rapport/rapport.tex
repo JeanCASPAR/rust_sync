@@ -1,0 +1,104 @@
+\documentclass{scrartcl}
+\usepackage{cmap}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[french]{babel}
+\usepackage{microtype}
+\usepackage{syntax}
+
+\title{Rustre}
+\subtitle{Rustre = Rust + Lustre}
+\author{Jean \textsc{Caspar} \and Adrien \textsc{Mathieu}}
+\date{January 29, 2023}
+
+\begin{document}
+\maketitle{}
+\tableofcontents
+
+\section*{Introduction}
+
+\section{Analyse syntaxique}
+
+\section{Typage}
+\subsection{Types de base}
+\subsubsection{}
+
+\subsection{Horloges}
+
+\subsection{\texttt{pre} et \texttt{->}}
+
+\section{Ordonnancement}
+
+\section{Génération de code}
+
+\pagebreak
+\appendix
+
+\section{Grammaire de Rustre}
+\begin{grammar}
+  <module> ::= (`#![pass(' <int> `)')${}^?$ <node>${}^*_;$
+
+  <node> ::= `#![export]'${}^?$ `node' <ident> <node\_params> `=' `(' <node\_return> `)' <body>
+
+  <node\_params> ::= (<ident> `:' <type>)${}^*_,$
+
+  <node\_return> ::= <ident>${}^*_,$
+
+  <body> ::= <equation>${}^*_,$
+
+  <equation> ::= <ident> `:' <type> `=' <expr>
+
+  <expr> ::= <e0>
+
+  <e0> ::= <e1> `when' <ident>
+  \alt <e1> `whennot' <ident>
+  \alt <e1>
+
+  <e1> ::= <e2> `->' <e1>
+  \alt <e2>
+
+  <e2> ::= <e2> `+' <e3>
+  \alt <e1> `-' <e3>
+  \alt <e3>
+
+  <e3> ::= <e3> `*' <e4>
+  \alt <e2> `/' <e4>
+  \alt <e2> `\%' <e4>
+  \alt <e4>
+
+  <e4> ::= `-' <e5>
+  \alt `pre' <e5>
+  \alt <e5>
+
+  <e5> ::= <e6> `as' `float'
+  \alt <e6>
+
+  <e6> ::= <e7> `>=' <e7>
+  \alt <e7> `>' <e7>
+  \alt <e7> `<=' <e7>
+  \alt <e7> `<' <e7>
+  \alt <e7> `==' <e7>
+  \alt <e7> `!=' <e7>
+  \alt <e7>
+
+  <e7> ::= `!' <e8>
+  \alt <e8>
+
+  <e8> ::= <e8> `&&' <e9>
+  \alt <e9>
+
+  <e9> ::= <e9> `||' <e10>
+  \alt <e10>
+
+  <e10> ::= <literal>
+  \alt <ident>
+  \alt `spawn'$^?$ <ident> `(' (<e0>)${}^*_,$ `)'
+  \alt `if' <e0> `{' <e0> `}' `else' `{' <e0> `}'
+  \alt `merge' <ident> `{' (<bool> => `expr')${}^*_,$ `}'
+  \alt `(' <expr> `)'
+
+  <type> ::= `int'
+  \alt `float'
+  \alt `bool'
+\end{grammar}
+\end{document}
